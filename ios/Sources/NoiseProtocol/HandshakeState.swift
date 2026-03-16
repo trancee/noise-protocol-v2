@@ -18,7 +18,7 @@ class HandshakeState {
          hash: HashFunction, descriptor: HandshakeDescriptor,
          staticKeyPair: KeyPair? = nil,
          remoteStaticKey: Data? = nil, prologue: Data = Data(),
-         localEphemeral: KeyPair? = nil) {
+         localEphemeral: KeyPair? = nil) throws {
         self.role = role
         self.dhFn = dh
         self.fixedEphemeral = localEphemeral
@@ -32,13 +32,21 @@ class HandshakeState {
         // Process pre-messages: mix known public keys into handshake hash
         for token in descriptor.initiatorPreMessages {
             if token == "s" {
-                let key = role == .initiator ? s!.publicKey : rs!
+                guard let key = (role == .initiator ? s?.publicKey : rs) else {
+                    throw NoiseError.invalidKey(role == .initiator
+                        ? "Initiator static key required for \(descriptor.pattern) pattern"
+                        : "Remote static key required for \(descriptor.pattern) pattern")
+                }
                 symmetricState.mixHash(key)
             }
         }
         for token in descriptor.responderPreMessages {
             if token == "s" {
-                let key = role == .responder ? s!.publicKey : rs!
+                guard let key = (role == .responder ? s?.publicKey : rs) else {
+                    throw NoiseError.invalidKey(role == .responder
+                        ? "Responder static key required for \(descriptor.pattern) pattern"
+                        : "Remote static key required for \(descriptor.pattern) pattern")
+                }
                 symmetricState.mixHash(key)
             }
         }

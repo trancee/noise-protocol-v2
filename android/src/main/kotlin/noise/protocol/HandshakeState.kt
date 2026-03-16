@@ -31,7 +31,11 @@ class HandshakeState(
         for (token in descriptor.initiatorPreMessages) {
             when (token) {
                 "s" -> {
-                    val key = if (role == Role.INITIATOR) s!!.publicKey else rs!!
+                    val key = if (role == Role.INITIATOR) {
+                        s?.publicKey ?: throw NoiseException.InvalidKey("Initiator static key required for ${descriptor.pattern} pattern")
+                    } else {
+                        rs ?: throw NoiseException.InvalidKey("Remote static key required for ${descriptor.pattern} pattern")
+                    }
                     symmetricState.mixHash(key)
                 }
             }
@@ -39,7 +43,11 @@ class HandshakeState(
         for (token in descriptor.responderPreMessages) {
             when (token) {
                 "s" -> {
-                    val key = if (role == Role.RESPONDER) s!!.publicKey else rs!!
+                    val key = if (role == Role.RESPONDER) {
+                        s?.publicKey ?: throw NoiseException.InvalidKey("Responder static key required for ${descriptor.pattern} pattern")
+                    } else {
+                        rs ?: throw NoiseException.InvalidKey("Remote static key required for ${descriptor.pattern} pattern")
+                    }
                     symmetricState.mixHash(key)
                 }
             }

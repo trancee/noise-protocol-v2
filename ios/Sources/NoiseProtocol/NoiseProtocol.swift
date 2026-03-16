@@ -15,7 +15,7 @@ public class NoiseSession {
 
         let descriptor = try PatternParser.parse(protocolName)
 
-        self.handshakeState = HandshakeState(
+        self.handshakeState = try HandshakeState(
             protocolName: protocolName,
             role: role,
             dh: Self.resolveDH(descriptor.dhFunction),
