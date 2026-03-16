@@ -47,6 +47,8 @@ class NoiseSession(
         fun resolveHash(name: String): HashFunction = when (name) {
             "SHA256" -> SHA256Hash
             "SHA512" -> SHA512Hash
+            "BLAKE2b" -> Blake2bHash
+            "BLAKE2s" -> Blake2sHash
             else -> throw NoiseException.InvalidPattern("Unsupported hash: $name")
         }
     }

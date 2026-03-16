@@ -72,6 +72,8 @@ public class NoiseSession {
         switch name {
         case "SHA256": return SHA256Hash_()
         case "SHA512": return SHA512Hash_()
+        case "BLAKE2b": return Blake2bHash_()
+        case "BLAKE2s": return Blake2sHash_()
         default: fatalError("Unsupported hash: \(name)")
         }
     }
