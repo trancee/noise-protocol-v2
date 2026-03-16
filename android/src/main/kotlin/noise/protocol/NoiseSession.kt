@@ -9,12 +9,14 @@ class NoiseSession(
     localEphemeral: KeyPair? = null
 ) {
     private val handshakeState: HandshakeState
+    private val isOneWay: Boolean
 
     val isHandshakeComplete: Boolean
         get() = handshakeState.isHandshakeComplete
 
     init {
         val descriptor = PatternParser.parse(protocolName)
+        isOneWay = descriptor.messagePatterns.size == 1
 
         handshakeState = HandshakeState(
             protocolName = protocolName,
@@ -59,11 +61,21 @@ class NoiseSession(
 
     fun split(): TransportSession {
         val (c1, c2) = handshakeState.split()
+        val disabled = DisabledCipherState()
         return if (role == Role.INITIATOR) {
-            TransportSession(sender = c1, receiver = c2)
+            TransportSession(sender = c1, receiver = if (isOneWay) disabled else c2)
         } else {
-            TransportSession(sender = c2, receiver = c1)
+            TransportSession(sender = if (isOneWay) disabled else c2, receiver = c1)
         }
+    }
+}
+
+class DisabledCipherState : CipherState(ChaChaPoly) {
+    override fun encryptWithAd(ad: ByteArray, plaintext: ByteArray): ByteArray {
+        throw NoiseException.InvalidState("Cannot send on a one-way pattern receive-only channel")
+    }
+    override fun decryptWithAd(ad: ByteArray, ciphertext: ByteArray): ByteArray {
+        throw NoiseException.InvalidState("Cannot receive on a one-way pattern send-only channel")
     }
 }
 

@@ -3,6 +3,7 @@ import Foundation
 public class NoiseSession {
     private let handshakeState: HandshakeState
     private let role: Role
+    private let isOneWay: Bool
 
     public var isHandshakeComplete: Bool { handshakeState.isHandshakeComplete }
 
@@ -14,6 +15,7 @@ public class NoiseSession {
         self.role = role
 
         let descriptor = try PatternParser.parse(protocolName)
+        self.isOneWay = descriptor.messagePatterns.count == 1
 
         self.handshakeState = try HandshakeState(
             protocolName: protocolName,
@@ -43,9 +45,12 @@ public class NoiseSession {
 
     public func split() throws -> TransportSession {
         let (c1, c2) = try handshakeState.split()
-        return role == .initiator
-            ? TransportSession(sender: c1, receiver: c2)
-            : TransportSession(sender: c2, receiver: c1)
+        let disabled = DisabledCipherState()
+        if role == .initiator {
+            return TransportSession(sender: c1, receiver: isOneWay ? disabled : c2)
+        } else {
+            return TransportSession(sender: isOneWay ? disabled : c2, receiver: c1)
+        }
     }
 
     static func resolveDH(_ name: String) -> DH {
@@ -73,4 +78,16 @@ public class NoiseSession {
 public struct TransportSession {
     public let sender: CipherState
     public let receiver: CipherState
+}
+
+public class DisabledCipherState: CipherState {
+    init() {
+        super.init(cipher: ChaChaPoly_())
+    }
+    public override func encryptWithAd(_ ad: Data, plaintext: Data) throws -> Data {
+        throw NoiseError.invalidState("Cannot send on a one-way pattern receive-only channel")
+    }
+    public override func decryptWithAd(_ ad: Data, ciphertext: Data) throws -> Data {
+        throw NoiseError.invalidState("Cannot receive on a one-way pattern send-only channel")
+    }
 }
