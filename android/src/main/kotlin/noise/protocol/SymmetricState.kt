@@ -45,13 +45,16 @@ class SymmetricState(
     fun split(): Pair<CipherState, CipherState> {
         val (tempK1, tempK2) = hash.hkdf(ck, ByteArray(0), 2)
         val c1 = CipherState(cipher)
-        c1.setKey(if (tempK1.size > 32) tempK1.copyOf(32) else tempK1)
+        c1.setKey(truncateKey(tempK1))
         val c2 = CipherState(cipher)
-        c2.setKey(if (tempK2.size > 32) tempK2.copyOf(32) else tempK2)
+        c2.setKey(truncateKey(tempK2))
         return Pair(c1, c2)
     }
 
     fun hasKey(): Boolean = cipherState.hasKey()
 
     fun getHandshakeHash(): ByteArray = h.copyOf()
+
+    private fun truncateKey(key: ByteArray): ByteArray =
+        if (key.size > 32) key.copyOf(32) else key
 }
