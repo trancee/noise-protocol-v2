@@ -23,7 +23,17 @@ interface HashFunction {
     val blockLen: Int
     fun hash(data: ByteArray): ByteArray
     fun hmacHash(key: ByteArray, data: ByteArray): ByteArray
-    fun hkdf(chainingKey: ByteArray, inputKeyMaterial: ByteArray, numOutputs: Int): List<ByteArray>
+    fun hkdf(chainingKey: ByteArray, inputKeyMaterial: ByteArray, numOutputs: Int): List<ByteArray> {
+        val tempKey = hmacHash(chainingKey, inputKeyMaterial)
+        val output1 = hmacHash(tempKey, byteArrayOf(0x01))
+        if (numOutputs == 2) {
+            val output2 = hmacHash(tempKey, output1 + byteArrayOf(0x02))
+            return listOf(output1, output2)
+        }
+        val output2 = hmacHash(tempKey, output1 + byteArrayOf(0x02))
+        val output3 = hmacHash(tempKey, output2 + byteArrayOf(0x03))
+        return listOf(output1, output2, output3)
+    }
 }
 
 object Curve25519DH : DH {
@@ -81,11 +91,19 @@ object Curve25519DH : DH {
     }
 }
 
+// Noise spec: 4 bytes zeros + 8 bytes little-endian nonce = 12 bytes
+private fun nonceToBytes(nonce: Long): ByteArray {
+    val bytes = ByteArray(12)
+    for (i in 0..7) {
+        bytes[4 + i] = (nonce shr (8 * i)).toByte()
+    }
+    return bytes
+}
+
 object ChaChaPoly : CipherFunction {
     override fun encrypt(key: ByteArray, nonce: Long, ad: ByteArray, plaintext: ByteArray): ByteArray {
         val cipher = Cipher.getInstance("ChaCha20-Poly1305")
-        val nonceBytes = nonceToBytes(nonce)
-        val spec = javax.crypto.spec.IvParameterSpec(nonceBytes)
+        val spec = javax.crypto.spec.IvParameterSpec(nonceToBytes(nonce))
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "ChaCha20"), spec)
         cipher.updateAAD(ad)
         return cipher.doFinal(plaintext)
@@ -93,20 +111,26 @@ object ChaChaPoly : CipherFunction {
 
     override fun decrypt(key: ByteArray, nonce: Long, ad: ByteArray, ciphertext: ByteArray): ByteArray {
         val cipher = Cipher.getInstance("ChaCha20-Poly1305")
-        val nonceBytes = nonceToBytes(nonce)
-        val spec = javax.crypto.spec.IvParameterSpec(nonceBytes)
+        val spec = javax.crypto.spec.IvParameterSpec(nonceToBytes(nonce))
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "ChaCha20"), spec)
         cipher.updateAAD(ad)
         return cipher.doFinal(ciphertext)
     }
+}
 
-    private fun nonceToBytes(nonce: Long): ByteArray {
-        // Noise spec: 4 bytes zeros + 8 bytes little-endian nonce = 12 bytes
-        val bytes = ByteArray(12)
-        for (i in 0..7) {
-            bytes[4 + i] = (nonce shr (8 * i)).toByte()
-        }
-        return bytes
+object AESGCM : CipherFunction {
+    override fun encrypt(key: ByteArray, nonce: Long, ad: ByteArray, plaintext: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonceToBytes(nonce)))
+        cipher.updateAAD(ad)
+        return cipher.doFinal(plaintext)
+    }
+
+    override fun decrypt(key: ByteArray, nonce: Long, ad: ByteArray, ciphertext: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonceToBytes(nonce)))
+        cipher.updateAAD(ad)
+        return cipher.doFinal(ciphertext)
     }
 }
 
@@ -123,16 +147,19 @@ object SHA256Hash : HashFunction {
         mac.init(SecretKeySpec(key, "HmacSHA256"))
         return mac.doFinal(data)
     }
+}
 
-    override fun hkdf(chainingKey: ByteArray, inputKeyMaterial: ByteArray, numOutputs: Int): List<ByteArray> {
-        val tempKey = hmacHash(chainingKey, inputKeyMaterial)
-        val output1 = hmacHash(tempKey, byteArrayOf(0x01))
-        if (numOutputs == 2) {
-            val output2 = hmacHash(tempKey, output1 + byteArrayOf(0x02))
-            return listOf(output1, output2)
-        }
-        val output2 = hmacHash(tempKey, output1 + byteArrayOf(0x02))
-        val output3 = hmacHash(tempKey, output2 + byteArrayOf(0x03))
-        return listOf(output1, output2, output3)
+object SHA512Hash : HashFunction {
+    override val hashLen = 64
+    override val blockLen = 128
+
+    override fun hash(data: ByteArray): ByteArray {
+        return MessageDigest.getInstance("SHA-512").digest(data)
+    }
+
+    override fun hmacHash(key: ByteArray, data: ByteArray): ByteArray {
+        val mac = javax.crypto.Mac.getInstance("HmacSHA512")
+        mac.init(SecretKeySpec(key, "HmacSHA512"))
+        return mac.doFinal(data)
     }
 }

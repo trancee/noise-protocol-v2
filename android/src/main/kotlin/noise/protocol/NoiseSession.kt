@@ -40,11 +40,13 @@ class NoiseSession(
 
         fun resolveCipher(name: String): CipherFunction = when (name) {
             "ChaChaPoly" -> ChaChaPoly
+            "AESGCM" -> AESGCM
             else -> throw NoiseException.InvalidPattern("Unsupported cipher: $name")
         }
 
         fun resolveHash(name: String): HashFunction = when (name) {
             "SHA256" -> SHA256Hash
+            "SHA512" -> SHA512Hash
             else -> throw NoiseException.InvalidPattern("Unsupported hash: $name")
         }
     }

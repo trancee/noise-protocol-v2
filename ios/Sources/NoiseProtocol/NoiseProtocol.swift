@@ -63,6 +63,7 @@ public class NoiseSession {
     static func resolveCipher(_ name: String) -> CipherFunction {
         switch name {
         case "ChaChaPoly": return ChaChaPoly_()
+        case "AESGCM": return AESGCM_()
         default: fatalError("Unsupported cipher: \(name)")
         }
     }
@@ -70,6 +71,7 @@ public class NoiseSession {
     static func resolveHash(_ name: String) -> HashFunction {
         switch name {
         case "SHA256": return SHA256Hash_()
+        case "SHA512": return SHA512Hash_()
         default: fatalError("Unsupported hash: \(name)")
         }
     }
