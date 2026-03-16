@@ -12,12 +12,16 @@ public class NoiseSession {
                 prologue: Data = Data(),
                 localEphemeral: KeyPair? = nil) throws {
         self.role = role
+
+        let descriptor = try PatternParser.parse(protocolName)
+
         self.handshakeState = HandshakeState(
             protocolName: protocolName,
             role: role,
-            dh: Curve25519DH(),
-            cipher: ChaChaPoly_(),
-            hash: SHA256Hash_(),
+            dh: Self.resolveDH(descriptor.dhFunction),
+            cipher: Self.resolveCipher(descriptor.cipherFunction),
+            hash: Self.resolveHash(descriptor.hashFunction),
+            descriptor: descriptor,
             staticKeyPair: staticKeyPair,
             remoteStaticKey: remoteStaticKey,
             prologue: prologue,
@@ -42,6 +46,27 @@ public class NoiseSession {
         return role == .initiator
             ? TransportSession(sender: c1, receiver: c2)
             : TransportSession(sender: c2, receiver: c1)
+    }
+
+    static func resolveDH(_ name: String) -> DH {
+        switch name {
+        case "25519": return Curve25519DH()
+        default: fatalError("Unsupported DH: \(name)")
+        }
+    }
+
+    static func resolveCipher(_ name: String) -> CipherFunction {
+        switch name {
+        case "ChaChaPoly": return ChaChaPoly_()
+        default: fatalError("Unsupported cipher: \(name)")
+        }
+    }
+
+    static func resolveHash(_ name: String) -> HashFunction {
+        switch name {
+        case "SHA256": return SHA256Hash_()
+        default: fatalError("Unsupported hash: \(name)")
+        }
     }
 }
 

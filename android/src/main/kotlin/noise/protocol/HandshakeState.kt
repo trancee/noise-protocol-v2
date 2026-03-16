@@ -6,6 +6,7 @@ class HandshakeState(
     private val dh: DH,
     cipher: CipherFunction,
     hash: HashFunction,
+    private val descriptor: HandshakeDescriptor,
     staticKeyPair: KeyPair? = null,
     remoteStaticKey: ByteArray? = null,
     prologue: ByteArray = byteArrayOf(),
@@ -17,18 +18,32 @@ class HandshakeState(
     private var rs: ByteArray? = remoteStaticKey
     private var re: ByteArray? = null
     private var messageIndex = 0
-    private val messagePatterns: List<List<String>>
+    private val messagePatterns: List<List<String>> = descriptor.messagePatterns
     var isHandshakeComplete = false
         private set
     private var cipherStatePair: Pair<CipherState, CipherState>? = null
     private val fixedEphemeral: KeyPair? = localEphemeral
 
     init {
-        messagePatterns = listOf(
-            listOf("e"),
-            listOf("e", "ee")
-        )
         symmetricState.mixHash(prologue)
+
+        // Process pre-messages: mix known public keys into handshake hash
+        for (token in descriptor.initiatorPreMessages) {
+            when (token) {
+                "s" -> {
+                    val key = if (role == Role.INITIATOR) s!!.publicKey else rs!!
+                    symmetricState.mixHash(key)
+                }
+            }
+        }
+        for (token in descriptor.responderPreMessages) {
+            when (token) {
+                "s" -> {
+                    val key = if (role == Role.RESPONDER) s!!.publicKey else rs!!
+                    symmetricState.mixHash(key)
+                }
+            }
+        }
     }
 
     fun writeMessage(payload: ByteArray = byteArrayOf()): ByteArray {
@@ -81,7 +96,7 @@ class HandshakeState(
     }
 
     fun split(): Pair<CipherState, CipherState> {
-        check(isHandshakeComplete) { "Handshake not complete" }
+        if (!isHandshakeComplete) throw NoiseException.HandshakeIncomplete()
         return cipherStatePair!!
     }
 
@@ -91,7 +106,7 @@ class HandshakeState(
             "es" -> if (role == Role.INITIATOR) dh.dh(e!!, rs!!) else dh.dh(s!!, re!!)
             "se" -> if (role == Role.INITIATOR) dh.dh(s!!, re!!) else dh.dh(e!!, rs!!)
             "ss" -> dh.dh(s!!, rs!!)
-            else -> error("Unknown token: $token")
+            else -> throw NoiseException.InvalidPattern("Unknown token: $token")
         }
         symmetricState.mixKey(sharedSecret)
     }

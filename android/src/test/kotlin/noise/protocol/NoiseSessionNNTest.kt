@@ -121,7 +121,7 @@ class NoiseSessionNNTest {
     fun `split throws when handshake is not complete`() {
         val session = NoiseSession("Noise_NN_25519_ChaChaPoly_SHA256", Role.INITIATOR)
         assertFalse(session.isHandshakeComplete)
-        assertThrows<IllegalStateException> { session.split() }
+        assertThrows<NoiseException.HandshakeIncomplete> { session.split() }
     }
 
     @Test
@@ -131,6 +131,6 @@ class NoiseSessionNNTest {
         initiator.writeMessage().also { responder.readMessage(it) }
         responder.writeMessage().also { initiator.readMessage(it) }
         initiator.split()
-        assertThrows<IllegalStateException> { initiator.writeMessage() }
+        assertThrows<NoiseException.InvalidState> { initiator.writeMessage() }
     }
 }

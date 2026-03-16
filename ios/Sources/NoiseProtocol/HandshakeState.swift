@@ -15,7 +15,8 @@ class HandshakeState {
     private let fixedEphemeral: KeyPair?
 
     init(protocolName: String, role: Role, dh: DH, cipher: CipherFunction,
-         hash: HashFunction, staticKeyPair: KeyPair? = nil,
+         hash: HashFunction, descriptor: HandshakeDescriptor,
+         staticKeyPair: KeyPair? = nil,
          remoteStaticKey: Data? = nil, prologue: Data = Data(),
          localEphemeral: KeyPair? = nil) {
         self.role = role
@@ -24,10 +25,23 @@ class HandshakeState {
         self.s = staticKeyPair
         self.rs = remoteStaticKey
         self.symmetricState = SymmetricState(protocolName: protocolName, cipher: cipher, hash: hash)
+        self.messagePatterns = descriptor.messagePatterns
 
-        // NN pattern: → e, ← e, ee
-        self.messagePatterns = [["e"], ["e", "ee"]]
         symmetricState.mixHash(prologue)
+
+        // Process pre-messages: mix known public keys into handshake hash
+        for token in descriptor.initiatorPreMessages {
+            if token == "s" {
+                let key = role == .initiator ? s!.publicKey : rs!
+                symmetricState.mixHash(key)
+            }
+        }
+        for token in descriptor.responderPreMessages {
+            if token == "s" {
+                let key = role == .responder ? s!.publicKey : rs!
+                symmetricState.mixHash(key)
+            }
+        }
     }
 
     func writeMessage(payload: Data = Data()) throws -> Data {

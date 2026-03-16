@@ -14,12 +14,15 @@ class NoiseSession(
         get() = handshakeState.isHandshakeComplete
 
     init {
+        val descriptor = PatternParser.parse(protocolName)
+
         handshakeState = HandshakeState(
             protocolName = protocolName,
             role = role,
-            dh = Curve25519DH,
-            cipher = ChaChaPoly,
-            hash = SHA256Hash,
+            dh = resolveDH(descriptor.dhFunction),
+            cipher = resolveCipher(descriptor.cipherFunction),
+            hash = resolveHash(descriptor.hashFunction),
+            descriptor = descriptor,
             staticKeyPair = staticKeyPair,
             remoteStaticKey = remoteStaticKey,
             prologue = prologue,
@@ -27,13 +30,30 @@ class NoiseSession(
         )
     }
 
+    companion object {
+        fun resolveDH(name: String): DH = when (name) {
+            "25519" -> Curve25519DH
+            else -> throw NoiseException.InvalidPattern("Unsupported DH: $name")
+        }
+
+        fun resolveCipher(name: String): CipherFunction = when (name) {
+            "ChaChaPoly" -> ChaChaPoly
+            else -> throw NoiseException.InvalidPattern("Unsupported cipher: $name")
+        }
+
+        fun resolveHash(name: String): HashFunction = when (name) {
+            "SHA256" -> SHA256Hash
+            else -> throw NoiseException.InvalidPattern("Unsupported hash: $name")
+        }
+    }
+
     fun writeMessage(payload: ByteArray = byteArrayOf()): ByteArray {
-        check(!isHandshakeComplete) { "Handshake already complete, use split() for transport" }
+        if (isHandshakeComplete) throw NoiseException.InvalidState("Handshake already complete, use split() for transport")
         return handshakeState.writeMessage(payload)
     }
 
     fun readMessage(message: ByteArray): ByteArray {
-        check(!isHandshakeComplete) { "Handshake already complete, use split() for transport" }
+        if (isHandshakeComplete) throw NoiseException.InvalidState("Handshake already complete, use split() for transport")
         return handshakeState.readMessage(message)
     }
 
