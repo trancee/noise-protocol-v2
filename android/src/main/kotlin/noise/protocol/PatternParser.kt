@@ -23,6 +23,7 @@ sealed class NoiseException(message: String) : Exception(message) {
 }
 
 object PatternParser {
+    private val parseCache = java.util.concurrent.ConcurrentHashMap<String, HandshakeDescriptor>()
 
     private val VALID_DH = setOf("25519", "448")
     private val VALID_CIPHER = setOf("ChaChaPoly", "AESGCM")
@@ -193,6 +194,14 @@ object PatternParser {
     )
 
     fun parse(protocolName: String): HandshakeDescriptor {
+        parseCache[protocolName]?.let { return it.copy() }
+
+        val result = parseImpl(protocolName)
+        parseCache[protocolName] = result
+        return result.copy()
+    }
+
+    private fun parseImpl(protocolName: String): HandshakeDescriptor {
         val parts = protocolName.split("_")
 
         // Handle NoisePSK_ prefix format

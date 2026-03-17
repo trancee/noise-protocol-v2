@@ -42,7 +42,8 @@ class SymmetricState(
     }
 
     fun mixHash(data: ByteArray) {
-        h = hash.hash(h + data)
+        // Avoid h + data allocation by using incremental hashing
+        h = hash.hash(h, data)
     }
 
     fun encryptAndHash(plaintext: ByteArray): ByteArray {

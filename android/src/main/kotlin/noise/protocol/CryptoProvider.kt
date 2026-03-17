@@ -22,6 +22,7 @@ interface HashFunction {
     val hashLen: Int
     val blockLen: Int
     fun hash(data: ByteArray): ByteArray
+    fun hash(a: ByteArray, b: ByteArray): ByteArray = hash(a + b)
     fun hmacHash(key: ByteArray, data: ByteArray): ByteArray {
         val paddedKey = if (key.size > blockLen) hash(key) else key
         val ipad = ByteArray(blockLen) { if (it < paddedKey.size) (paddedKey[it].toInt() xor 0x36).toByte() else 0x36 }
@@ -32,11 +33,21 @@ interface HashFunction {
         val tempKey = hmacHash(chainingKey, inputKeyMaterial)
         val output1 = hmacHash(tempKey, byteArrayOf(0x01))
         if (numOutputs == 2) {
-            val output2 = hmacHash(tempKey, output1 + byteArrayOf(0x02))
+            // Avoid output1 + byteArrayOf(0x02) allocation
+            val input2 = ByteArray(output1.size + 1)
+            output1.copyInto(input2)
+            input2[output1.size] = 0x02
+            val output2 = hmacHash(tempKey, input2)
             return listOf(output1, output2)
         }
-        val output2 = hmacHash(tempKey, output1 + byteArrayOf(0x02))
-        val output3 = hmacHash(tempKey, output2 + byteArrayOf(0x03))
+        val input2 = ByteArray(output1.size + 1)
+        output1.copyInto(input2)
+        input2[output1.size] = 0x02
+        val output2 = hmacHash(tempKey, input2)
+        val input3 = ByteArray(output2.size + 1)
+        output2.copyInto(input3)
+        input3[output2.size] = 0x03
+        val output3 = hmacHash(tempKey, input3)
         return listOf(output1, output2, output3)
     }
 }
@@ -44,9 +55,23 @@ interface HashFunction {
 object Curve25519DH : DH {
     override val dhLen = 32
 
+    // Cached JCA instances (KeyFactory is thread-safe; KPG/KA are per-thread)
+    private val keyFactory = java.security.KeyFactory.getInstance("X25519")
+    private val kpgLocal = ThreadLocal.withInitial { KeyPairGenerator.getInstance("X25519") }
+    private val kaLocal = ThreadLocal.withInitial { KeyAgreement.getInstance("X25519") }
+
+    // Pre-allocated ASN.1 headers (avoid concatenation per call)
+    private val pkcs8Header = byteArrayOf(
+        0x30, 0x2E, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
+        0x03, 0x2B, 0x65, 0x6E, 0x04, 0x22, 0x04, 0x20
+    )
+    private val x509Header = byteArrayOf(
+        0x30, 0x2A, 0x30, 0x05, 0x06, 0x03, 0x2B, 0x65,
+        0x6E, 0x03, 0x21, 0x00
+    )
+
     override fun generateKeyPair(): KeyPair {
-        val kpg = KeyPairGenerator.getInstance("X25519")
-        val javaKeyPair = kpg.generateKeyPair()
+        val javaKeyPair = kpgLocal.get().generateKeyPair()
         val privBytes = extractRawPrivateKey(javaKeyPair.private)
         val pubBytes = extractRawPublicKey(javaKeyPair.public)
         return KeyPair(privBytes, pubBytes)
@@ -55,53 +80,41 @@ object Curve25519DH : DH {
     override fun dh(keyPair: KeyPair, publicKey: ByteArray): ByteArray {
         val privKey = buildX25519PrivateKey(keyPair.privateKey)
         val pubKey = buildX25519PublicKey(publicKey)
-        val ka = KeyAgreement.getInstance("X25519")
+        val ka = kaLocal.get()
         ka.init(privKey)
         ka.doPhase(pubKey, true)
         return ka.generateSecret()
     }
 
     private fun extractRawPrivateKey(key: java.security.PrivateKey): ByteArray {
-        // PKCS#8 DER for X25519: last 32 bytes after the ASN.1 wrapper
         val encoded = key.encoded
         return encoded.copyOfRange(encoded.size - 32, encoded.size)
     }
 
     private fun extractRawPublicKey(key: java.security.PublicKey): ByteArray {
-        // X.509 DER for X25519: last 32 bytes after the ASN.1 wrapper
         val encoded = key.encoded
         return encoded.copyOfRange(encoded.size - 32, encoded.size)
     }
 
     private fun buildX25519PrivateKey(raw: ByteArray): java.security.PrivateKey {
-        // Build PKCS#8 encoding for X25519 private key
-        val pkcs8Header = byteArrayOf(
-            0x30, 0x2E, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
-            0x03, 0x2B, 0x65, 0x6E, 0x04, 0x22, 0x04, 0x20
-        )
-        val pkcs8 = pkcs8Header + raw
-        val keySpec = java.security.spec.PKCS8EncodedKeySpec(pkcs8)
-        return java.security.KeyFactory.getInstance("X25519").generatePrivate(keySpec)
+        // Inline ASN.1 wrapping into pre-sized buffer (avoid + concatenation)
+        val pkcs8 = ByteArray(pkcs8Header.size + 32)
+        pkcs8Header.copyInto(pkcs8)
+        raw.copyInto(pkcs8, pkcs8Header.size)
+        return keyFactory.generatePrivate(java.security.spec.PKCS8EncodedKeySpec(pkcs8))
     }
 
     private fun buildX25519PublicKey(raw: ByteArray): java.security.PublicKey {
-        // Build X.509 encoding for X25519 public key
-        val x509Header = byteArrayOf(
-            0x30, 0x2A, 0x30, 0x05, 0x06, 0x03, 0x2B, 0x65,
-            0x6E, 0x03, 0x21, 0x00
-        )
-        val x509 = x509Header + raw
-        val keySpec = java.security.spec.X509EncodedKeySpec(x509)
-        return java.security.KeyFactory.getInstance("X25519").generatePublic(keySpec)
+        val x509 = ByteArray(x509Header.size + 32)
+        x509Header.copyInto(x509)
+        raw.copyInto(x509, x509Header.size)
+        return keyFactory.generatePublic(java.security.spec.X509EncodedKeySpec(x509))
     }
 
     fun generatePublicKey(privateKey: ByteArray): ByteArray {
         val privKey = buildX25519PrivateKey(privateKey)
-        val kf = java.security.KeyFactory.getInstance("X25519")
-        // Generate public key from private key using KeyAgreement with basepoint
-        val ka = KeyAgreement.getInstance("X25519")
+        val ka = kaLocal.get()
         ka.init(privKey)
-        // X25519 basepoint = 9 (little-endian)
         val basepoint = ByteArray(32).also { it[0] = 9 }
         ka.doPhase(buildX25519PublicKey(basepoint), true)
         return ka.generateSecret()
@@ -124,42 +137,53 @@ object X448DH : DH {
 }
 
 // Noise spec: 4 bytes zeros + 8 bytes little-endian nonce = 12 bytes
+// Thread-local buffer to avoid per-call allocation
+private val nonceBuffer = ThreadLocal.withInitial { ByteArray(12) }
+
 private fun nonceToBytes(nonce: Long): ByteArray {
-    val bytes = ByteArray(12)
-    for (i in 0..7) {
-        bytes[4 + i] = (nonce shr (8 * i)).toByte()
-    }
+    val bytes = nonceBuffer.get()
+    // First 4 bytes are always zero (already initialized)
+    bytes[4] = (nonce).toByte()
+    bytes[5] = (nonce shr 8).toByte()
+    bytes[6] = (nonce shr 16).toByte()
+    bytes[7] = (nonce shr 24).toByte()
+    bytes[8] = (nonce shr 32).toByte()
+    bytes[9] = (nonce shr 40).toByte()
+    bytes[10] = (nonce shr 48).toByte()
+    bytes[11] = (nonce shr 56).toByte()
     return bytes
 }
 
 object ChaChaPoly : CipherFunction {
+    private val cipherLocal = ThreadLocal.withInitial { Cipher.getInstance("ChaCha20-Poly1305") }
+
     override fun encrypt(key: ByteArray, nonce: Long, ad: ByteArray, plaintext: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance("ChaCha20-Poly1305")
-        val spec = javax.crypto.spec.IvParameterSpec(nonceToBytes(nonce))
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "ChaCha20"), spec)
+        val cipher = cipherLocal.get()
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "ChaCha20"), javax.crypto.spec.IvParameterSpec(nonceToBytes(nonce)))
         cipher.updateAAD(ad)
         return cipher.doFinal(plaintext)
     }
 
     override fun decrypt(key: ByteArray, nonce: Long, ad: ByteArray, ciphertext: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance("ChaCha20-Poly1305")
-        val spec = javax.crypto.spec.IvParameterSpec(nonceToBytes(nonce))
-        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "ChaCha20"), spec)
+        val cipher = cipherLocal.get()
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "ChaCha20"), javax.crypto.spec.IvParameterSpec(nonceToBytes(nonce)))
         cipher.updateAAD(ad)
         return cipher.doFinal(ciphertext)
     }
 }
 
 object AESGCM : CipherFunction {
+    private val cipherLocal = ThreadLocal.withInitial { Cipher.getInstance("AES/GCM/NoPadding") }
+
     override fun encrypt(key: ByteArray, nonce: Long, ad: ByteArray, plaintext: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        val cipher = cipherLocal.get()
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonceToBytes(nonce)))
         cipher.updateAAD(ad)
         return cipher.doFinal(plaintext)
     }
 
     override fun decrypt(key: ByteArray, nonce: Long, ad: ByteArray, ciphertext: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        val cipher = cipherLocal.get()
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonceToBytes(nonce)))
         cipher.updateAAD(ad)
         return cipher.doFinal(ciphertext)
@@ -169,13 +193,24 @@ object AESGCM : CipherFunction {
 object SHA256Hash : HashFunction {
     override val hashLen = 32
     override val blockLen = 64
+    private val mdLocal = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-256") }
+    private val macLocal = ThreadLocal.withInitial { javax.crypto.Mac.getInstance("HmacSHA256") }
 
     override fun hash(data: ByteArray): ByteArray {
-        return MessageDigest.getInstance("SHA-256").digest(data)
+        val md = mdLocal.get()
+        md.reset()
+        return md.digest(data)
+    }
+
+    override fun hash(a: ByteArray, b: ByteArray): ByteArray {
+        val md = mdLocal.get()
+        md.reset()
+        md.update(a)
+        return md.digest(b)
     }
 
     override fun hmacHash(key: ByteArray, data: ByteArray): ByteArray {
-        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        val mac = macLocal.get()
         mac.init(SecretKeySpec(key, "HmacSHA256"))
         return mac.doFinal(data)
     }
@@ -184,13 +219,24 @@ object SHA256Hash : HashFunction {
 object SHA512Hash : HashFunction {
     override val hashLen = 64
     override val blockLen = 128
+    private val mdLocal = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-512") }
+    private val macLocal = ThreadLocal.withInitial { javax.crypto.Mac.getInstance("HmacSHA512") }
 
     override fun hash(data: ByteArray): ByteArray {
-        return MessageDigest.getInstance("SHA-512").digest(data)
+        val md = mdLocal.get()
+        md.reset()
+        return md.digest(data)
+    }
+
+    override fun hash(a: ByteArray, b: ByteArray): ByteArray {
+        val md = mdLocal.get()
+        md.reset()
+        md.update(a)
+        return md.digest(b)
     }
 
     override fun hmacHash(key: ByteArray, data: ByteArray): ByteArray {
-        val mac = javax.crypto.Mac.getInstance("HmacSHA512")
+        val mac = macLocal.get()
         mac.init(SecretKeySpec(key, "HmacSHA512"))
         return mac.doFinal(data)
     }
