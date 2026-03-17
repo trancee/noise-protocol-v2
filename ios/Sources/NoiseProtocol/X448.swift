@@ -111,113 +111,164 @@ public enum X448_: Sendable {
     private static func encodeUCoordinate(_ fe: BigNum) -> Data {
         let v = modP(fe)
         var bytes = Data(count: 56)
-        for i in 0..<min(v.words.count, 7) {
+        for i in 0..<min(v.count, 7) {
             for j in 0..<8 {
-                bytes[i * 8 + j] = UInt8(truncatingIfNeeded: v.words[i] >> (j * 8))
+                bytes[i * 8 + j] = UInt8(truncatingIfNeeded: v[i] >> (j * 8))
             }
         }
         return bytes
     }
 
-    // MARK: - BigNum (private unsigned big integer, little-endian UInt64 words)
+    // MARK: - BigNum (fixed-size inline storage, zero heap allocation)
+    //
+    // Stores up to 15 UInt64 words in a tuple (120 bytes, stack-allocated).
+    // Field elements need 7 words; multiplication intermediates need up to 14.
+    // The `count` field tracks significant words (replaces dynamic array trim).
 
     private struct BigNum: Equatable, Comparable, Sendable {
-        var words: [UInt64]
+        private var s: (UInt64,UInt64,UInt64,UInt64,UInt64,UInt64,UInt64,UInt64,
+                        UInt64,UInt64,UInt64,UInt64,UInt64,UInt64,UInt64)
+        private(set) var count: Int
 
-        static let zero = BigNum([0])
-        static let one  = BigNum([1])
+        static let zero = BigNum(0)
+        static let one  = BigNum(1)
 
-        init(_ words: [UInt64]) {
-            self.words = words
-            self.trim()
+        @inline(__always)
+        subscript(i: Int) -> UInt64 {
+            get {
+                withUnsafePointer(to: s) { ptr in
+                    ptr.withMemoryRebound(to: UInt64.self, capacity: 15) { $0[i] }
+                }
+            }
+            set {
+                withUnsafeMutablePointer(to: &s) { ptr in
+                    ptr.withMemoryRebound(to: UInt64.self, capacity: 15) { $0[i] = newValue }
+                }
+            }
         }
 
         init(_ value: UInt64) {
-            self.words = [value]
+            s = (value,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+            count = 1
         }
 
+        init(_ words: [UInt64]) {
+            s = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+            count = min(words.count, 15)
+            withUnsafeMutablePointer(to: &s) { ptr in
+                ptr.withMemoryRebound(to: UInt64.self, capacity: 15) { buf in
+                    for i in 0..<count { buf[i] = words[i] }
+                }
+            }
+            trim()
+        }
+
+        private init(count: Int, fill: (UnsafeMutablePointer<UInt64>) -> Void) {
+            s = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+            self.count = min(count, 15)
+            withUnsafeMutablePointer(to: &s) { ptr in
+                ptr.withMemoryRebound(to: UInt64.self, capacity: 15) { fill($0) }
+            }
+            trim()
+        }
+
+        @inline(__always)
         private mutating func trim() {
-            while words.count > 1, words.last! == 0 { words.removeLast() }
+            while count > 1 && self[count - 1] == 0 { count -= 1 }
         }
 
-        var isZero: Bool { words.count == 1 && words[0] == 0 }
+        var isZero: Bool { count == 1 && self[0] == 0 }
 
         var bitLength: Int {
-            guard let top = words.last, top != 0 else { return 0 }
-            return (words.count - 1) * 64 + (64 - top.leadingZeroBitCount)
+            let top = self[count - 1]
+            if top == 0 { return 0 }
+            return (count - 1) * 64 + (64 - top.leadingZeroBitCount)
         }
 
+        @inline(__always)
         func bit(_ i: Int) -> Int {
             let w = i / 64
-            guard w < words.count else { return 0 }
-            return Int((words[w] >> (i % 64)) & 1)
+            guard w < count else { return 0 }
+            return Int((self[w] >> (i % 64)) & 1)
         }
 
-        /// Lower 448 bits (7 full words since 448 = 7×64)
         var lo448: BigNum {
-            if words.count <= 7 { return self }
-            return BigNum(Array(words.prefix(7)))
+            if count <= 7 { return self }
+            var r = BigNum(0)
+            r.count = 7
+            for i in 0..<7 { r[i] = self[i] }
+            r.trim()
+            return r
         }
 
         // MARK: Comparison
 
         static func < (lhs: BigNum, rhs: BigNum) -> Bool {
-            if lhs.words.count != rhs.words.count {
-                return lhs.words.count < rhs.words.count
-            }
-            for i in stride(from: lhs.words.count - 1, through: 0, by: -1) {
-                if lhs.words[i] != rhs.words[i] { return lhs.words[i] < rhs.words[i] }
+            if lhs.count != rhs.count { return lhs.count < rhs.count }
+            for i in stride(from: lhs.count - 1, through: 0, by: -1) {
+                if lhs[i] != rhs[i] { return lhs[i] < rhs[i] }
             }
             return false
+        }
+
+        static func == (lhs: BigNum, rhs: BigNum) -> Bool {
+            if lhs.count != rhs.count { return false }
+            for i in 0..<lhs.count {
+                if lhs[i] != rhs[i] { return false }
+            }
+            return true
         }
 
         // MARK: Arithmetic
 
         static func + (lhs: BigNum, rhs: BigNum) -> BigNum {
-            let n = max(lhs.words.count, rhs.words.count)
-            var r = [UInt64](repeating: 0, count: n + 1)
-            var carry: UInt64 = 0
-            for i in 0..<n {
-                let a: UInt64 = i < lhs.words.count ? lhs.words[i] : 0
-                let b: UInt64 = i < rhs.words.count ? rhs.words[i] : 0
-                let (s1, o1) = a.addingReportingOverflow(b)
-                let (s2, o2) = s1.addingReportingOverflow(carry)
-                r[i] = s2
-                carry = (o1 ? 1 : 0) + (o2 ? 1 : 0)
+            let n = max(lhs.count, rhs.count)
+            return BigNum(count: n + 1) { r in
+                var carry: UInt64 = 0
+                for i in 0..<n {
+                    let a: UInt64 = i < lhs.count ? lhs[i] : 0
+                    let b: UInt64 = i < rhs.count ? rhs[i] : 0
+                    let (s1, o1) = a.addingReportingOverflow(b)
+                    let (s2, o2) = s1.addingReportingOverflow(carry)
+                    r[i] = s2
+                    carry = (o1 ? 1 : 0) + (o2 ? 1 : 0)
+                }
+                r[n] = carry
             }
-            r[n] = carry
-            return BigNum(r)
         }
 
         static func - (lhs: BigNum, rhs: BigNum) -> BigNum {
-            var r = [UInt64](repeating: 0, count: lhs.words.count)
-            var borrow: UInt64 = 0
-            for i in 0..<lhs.words.count {
-                let a = lhs.words[i]
-                let b: UInt64 = i < rhs.words.count ? rhs.words[i] : 0
-                let (d1, o1) = a.subtractingReportingOverflow(b)
-                let (d2, o2) = d1.subtractingReportingOverflow(borrow)
-                r[i] = d2
-                borrow = (o1 ? 1 : 0) + (o2 ? 1 : 0)
+            return BigNum(count: lhs.count) { r in
+                var borrow: UInt64 = 0
+                for i in 0..<lhs.count {
+                    let a = lhs[i]
+                    let b: UInt64 = i < rhs.count ? rhs[i] : 0
+                    let (d1, o1) = a.subtractingReportingOverflow(b)
+                    let (d2, o2) = d1.subtractingReportingOverflow(borrow)
+                    r[i] = d2
+                    borrow = (o1 ? 1 : 0) + (o2 ? 1 : 0)
+                }
             }
-            return BigNum(r)
         }
 
         static func * (lhs: BigNum, rhs: BigNum) -> BigNum {
-            let m = lhs.words.count, n = rhs.words.count
-            var r = [UInt64](repeating: 0, count: m + n)
-            for i in 0..<m {
-                var carry: UInt64 = 0
-                for j in 0..<n {
-                    let (hi, lo) = lhs.words[i].multipliedFullWidth(by: rhs.words[j])
-                    let (s1, o1) = lo.addingReportingOverflow(r[i + j])
-                    let (s2, o2) = s1.addingReportingOverflow(carry)
-                    r[i + j] = s2
-                    carry = hi + (o1 ? 1 : 0) + (o2 ? 1 : 0)
+            let m = lhs.count, n = rhs.count
+            return BigNum(count: min(m + n, 15)) { r in
+                let total = min(m + n, 15)
+                for x in 0..<total { r[x] = 0 }
+                for i in 0..<m {
+                    var carry: UInt64 = 0
+                    for j in 0..<n {
+                        guard i + j < 15 else { break }
+                        let (hi, lo) = lhs[i].multipliedFullWidth(by: rhs[j])
+                        let (s1, o1) = lo.addingReportingOverflow(r[i + j])
+                        let (s2, o2) = s1.addingReportingOverflow(carry)
+                        r[i + j] = s2
+                        carry = hi + (o1 ? 1 : 0) + (o2 ? 1 : 0)
+                    }
+                    if i + n < 15 { r[i + n] = carry }
                 }
-                r[i + n] = carry
             }
-            return BigNum(r)
         }
 
         // MARK: Shifts
@@ -225,33 +276,34 @@ public enum X448_: Sendable {
         func shiftLeft(_ n: Int) -> BigNum {
             if n == 0 { return self }
             let ws = n / 64, bs = n % 64
-            let cnt = words.count + ws + (bs > 0 ? 1 : 0)
-            var r = [UInt64](repeating: 0, count: cnt)
-            if bs == 0 {
-                for i in 0..<words.count { r[i + ws] = words[i] }
-            } else {
-                for i in 0..<words.count {
-                    r[i + ws] |= words[i] << bs
-                    r[i + ws + 1] |= words[i] >> (64 - bs)
+            let cnt = min(count + ws + (bs > 0 ? 1 : 0), 15)
+            return BigNum(count: cnt) { r in
+                for x in 0..<cnt { r[x] = 0 }
+                if bs == 0 {
+                    for i in 0..<self.count where i + ws < 15 { r[i + ws] = self[i] }
+                } else {
+                    for i in 0..<self.count where i + ws < 15 {
+                        r[i + ws] |= self[i] << bs
+                        if i + ws + 1 < 15 { r[i + ws + 1] |= self[i] >> (64 - bs) }
+                    }
                 }
             }
-            return BigNum(r)
         }
 
         func shiftRight(_ n: Int) -> BigNum {
             let ws = n / 64, bs = n % 64
-            if ws >= words.count { return .zero }
-            let cnt = words.count - ws
-            var r = [UInt64](repeating: 0, count: cnt)
-            if bs == 0 {
-                for i in 0..<cnt { r[i] = words[i + ws] }
-            } else {
-                for i in 0..<cnt {
-                    r[i] = words[i + ws] >> bs
-                    if i + ws + 1 < words.count { r[i] |= words[i + ws + 1] << (64 - bs) }
+            if ws >= count { return .zero }
+            let cnt = count - ws
+            return BigNum(count: cnt) { r in
+                if bs == 0 {
+                    for i in 0..<cnt { r[i] = self[i + ws] }
+                } else {
+                    for i in 0..<cnt {
+                        r[i] = self[i + ws] >> bs
+                        if i + ws + 1 < self.count { r[i] |= self[i + ws + 1] << (64 - bs) }
+                    }
                 }
             }
-            return BigNum(r)
         }
     }
 }
