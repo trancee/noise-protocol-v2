@@ -83,8 +83,7 @@ class PatternParserTest {
         assertThrows<NoiseException.InvalidPattern> { PatternParser.parse("") }
         assertThrows<NoiseException.InvalidPattern> { PatternParser.parse("Noise_NN") }
         assertThrows<NoiseException.InvalidPattern> { PatternParser.parse("Noise_ZZ_25519_ChaChaPoly_SHA256") }
-        assertThrows<NoiseException.InvalidPattern> { PatternParser.parse("Noise_NN_25519_AES_SHA256") }
-        assertThrows<NoiseException.InvalidPattern> { PatternParser.parse("Noise_NN_25519_ChaChaPoly_MD5") }
+        // Algorithm name validation is now handled by CryptoResolver, not PatternParser
         assertThrows<NoiseException.InvalidPattern> { PatternParser.parse("NotNoise_NN_25519_ChaChaPoly_SHA256") }
     }
 

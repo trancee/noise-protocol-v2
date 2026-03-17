@@ -56,24 +56,4 @@ struct PatternParserTests {
         }
     }
 
-    @Test("rejects unknown DH")
-    func rejectsUnknownDH() throws {
-        #expect(throws: NoiseError.self) {
-            try PatternParser.parse("Noise_NN_P256_ChaChaPoly_SHA256")
-        }
-    }
-
-    @Test("rejects unknown cipher")
-    func rejectsUnknownCipher() throws {
-        #expect(throws: NoiseError.self) {
-            try PatternParser.parse("Noise_NN_25519_AES128_SHA256")
-        }
-    }
-
-    @Test("rejects unknown hash")
-    func rejectsUnknownHash() throws {
-        #expect(throws: NoiseError.self) {
-            try PatternParser.parse("Noise_NN_25519_ChaChaPoly_MD5")
-        }
-    }
 }
