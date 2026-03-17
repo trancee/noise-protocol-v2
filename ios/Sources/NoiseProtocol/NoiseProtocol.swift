@@ -67,6 +67,8 @@ public class NoiseSession {
     ///   - localEphemeral: A fixed local ephemeral key pair (primarily for testing).
     ///   - remoteEphemeral: The remote ephemeral public key, if known from a pre-message.
     ///   - psks: Pre-shared keys for PSK handshake patterns.
+    ///   - crypto: A ``CryptoResolver`` used to look up DH, cipher, and hash implementations
+    ///     by name. Defaults to ``DefaultCryptoResolver/default`` which supports all standard algorithms.
     /// - Throws: ``NoiseError/invalidPattern(_:)`` if the protocol name is malformed,
     ///   ``NoiseError/invalidKey(_:)`` if required keys are missing.
     public init(protocolName: String, role: Role,
@@ -75,18 +77,25 @@ public class NoiseSession {
                 prologue: Data = Data(),
                 localEphemeral: KeyPair? = nil,
                 remoteEphemeral: Data? = nil,
-                psks: [Data] = []) throws {
+                psks: [Data] = [],
+                crypto: CryptoResolver = DefaultCryptoResolver.default) throws {
         self.role = role
 
         let descriptor = try PatternParser.parse(protocolName)
         self.isOneWay = descriptor.messagePatterns.count == 1
 
+        let suite = try crypto.resolve(
+            dhName: descriptor.dhFunction,
+            cipherName: descriptor.cipherFunction,
+            hashName: descriptor.hashFunction
+        )
+
         self.handshakeState = try HandshakeState(
             protocolName: protocolName,
             role: role,
-            dh: Self.resolveDH(descriptor.dhFunction),
-            cipher: Self.resolveCipher(descriptor.cipherFunction),
-            hash: Self.resolveHash(descriptor.hashFunction),
+            dh: suite.dh,
+            cipher: suite.cipher,
+            hash: suite.hash,
             descriptor: descriptor,
             staticKeyPair: staticKeyPair,
             remoteStaticKey: remoteStaticKey,
@@ -156,31 +165,6 @@ public class NoiseSession {
         }
     }
 
-    static func resolveDH(_ name: String) -> DH {
-        switch name {
-        case "25519": return Curve25519DH()
-        case "448": return X448DH_()
-        default: fatalError("Unsupported DH: \(name)")
-        }
-    }
-
-    static func resolveCipher(_ name: String) -> CipherFunction {
-        switch name {
-        case "ChaChaPoly": return ChaChaPoly_()
-        case "AESGCM": return AESGCM_()
-        default: fatalError("Unsupported cipher: \(name)")
-        }
-    }
-
-    static func resolveHash(_ name: String) -> HashFunction {
-        switch name {
-        case "SHA256": return SHA256Hash_()
-        case "SHA512": return SHA512Hash_()
-        case "BLAKE2b": return Blake2bHash_()
-        case "BLAKE2s": return Blake2sHash_()
-        default: fatalError("Unsupported hash: \(name)")
-        }
-    }
 }
 
 /// Holds the two cipher states for post-handshake encrypted communication.

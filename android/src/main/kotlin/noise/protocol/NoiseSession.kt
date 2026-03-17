@@ -63,7 +63,8 @@ class NoiseSession(
     prologue: ByteArray = byteArrayOf(),
     localEphemeral: KeyPair? = null,
     remoteEphemeral: ByteArray? = null,
-    psks: List<ByteArray> = emptyList()
+    psks: List<ByteArray> = emptyList(),
+    crypto: CryptoResolver = CryptoResolver.default
 ) {
     private val handshakeState: HandshakeState
     private val isOneWay: Boolean
@@ -75,13 +76,14 @@ class NoiseSession(
     init {
         val descriptor = PatternParser.parse(protocolName)
         isOneWay = descriptor.messagePatterns.size == 1
+        val suite = crypto.resolve(descriptor.dhFunction, descriptor.cipherFunction, descriptor.hashFunction)
 
         handshakeState = HandshakeState(
             protocolName = protocolName,
             role = role,
-            dh = resolveDH(descriptor.dhFunction),
-            cipher = resolveCipher(descriptor.cipherFunction),
-            hash = resolveHash(descriptor.hashFunction),
+            dh = suite.dh,
+            cipher = suite.cipher,
+            hash = suite.hash,
             descriptor = descriptor,
             staticKeyPair = staticKeyPair,
             remoteStaticKey = remoteStaticKey,
@@ -90,49 +92,6 @@ class NoiseSession(
             remoteEphemeral = remoteEphemeral,
             psks = psks
         )
-    }
-
-    companion object {
-        /**
-         * Resolves a DH function name to its implementation.
-         *
-         * @param name The DH identifier (`"25519"` or `"448"`).
-         * @return The corresponding [DH] implementation.
-         * @throws NoiseException.InvalidPattern If [name] is not recognized.
-         */
-        fun resolveDH(name: String): DH = when (name) {
-            "25519" -> Curve25519DH
-            "448" -> X448DH
-            else -> throw NoiseException.InvalidPattern("Unsupported DH: $name")
-        }
-
-        /**
-         * Resolves a cipher function name to its implementation.
-         *
-         * @param name The cipher identifier (`"ChaChaPoly"` or `"AESGCM"`).
-         * @return The corresponding [CipherFunction] implementation.
-         * @throws NoiseException.InvalidPattern If [name] is not recognized.
-         */
-        fun resolveCipher(name: String): CipherFunction = when (name) {
-            "ChaChaPoly" -> ChaChaPoly
-            "AESGCM" -> AESGCM
-            else -> throw NoiseException.InvalidPattern("Unsupported cipher: $name")
-        }
-
-        /**
-         * Resolves a hash function name to its implementation.
-         *
-         * @param name The hash identifier (`"SHA256"`, `"SHA512"`, `"BLAKE2b"`, or `"BLAKE2s"`).
-         * @return The corresponding [HashFunction] implementation.
-         * @throws NoiseException.InvalidPattern If [name] is not recognized.
-         */
-        fun resolveHash(name: String): HashFunction = when (name) {
-            "SHA256" -> SHA256Hash
-            "SHA512" -> SHA512Hash
-            "BLAKE2b" -> Blake2bHash
-            "BLAKE2s" -> Blake2sHash
-            else -> throw NoiseException.InvalidPattern("Unsupported hash: $name")
-        }
     }
 
     /**

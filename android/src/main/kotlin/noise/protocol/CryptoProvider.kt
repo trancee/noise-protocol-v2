@@ -329,17 +329,18 @@ object ChaChaPoly : CipherFunction {
  * @see ChaChaPoly
  */
 object AESGCM : CipherFunction {
-    private val cipherLocal = ThreadLocal.withInitial { Cipher.getInstance("AES/GCM/NoPadding") }
+    // GCM encrypt requires a fresh Cipher per call — Java 21 refuses re-init after doFinal
+    private val decryptCipherLocal = ThreadLocal.withInitial { Cipher.getInstance("AES/GCM/NoPadding") }
 
     override fun encrypt(key: ByteArray, nonce: Long, ad: ByteArray, plaintext: ByteArray): ByteArray {
-        val cipher = cipherLocal.get()
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonceToBytes(nonce)))
         cipher.updateAAD(ad)
         return cipher.doFinal(plaintext)
     }
 
     override fun decrypt(key: ByteArray, nonce: Long, ad: ByteArray, ciphertext: ByteArray): ByteArray {
-        val cipher = cipherLocal.get()
+        val cipher = decryptCipherLocal.get()
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonceToBytes(nonce)))
         cipher.updateAAD(ad)
         return cipher.doFinal(ciphertext)
