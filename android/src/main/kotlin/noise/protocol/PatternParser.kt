@@ -97,6 +97,99 @@ object PatternParser {
             emptyList(), listOf("s"),
             listOf(listOf("e", "es", "s", "ss"))
         ),
+        // Deferred patterns (Appendix 18.1)
+        "NK1" to PatternDef(
+            emptyList(), listOf("s"),
+            listOf(listOf("e"), listOf("e", "ee", "es"))
+        ),
+        "NX1" to PatternDef(
+            emptyList(), emptyList(),
+            listOf(listOf("e"), listOf("e", "ee", "s"), listOf("es"))
+        ),
+        "X1N" to PatternDef(
+            emptyList(), emptyList(),
+            listOf(listOf("e"), listOf("e", "ee"), listOf("s"), listOf("se"))
+        ),
+        "X1K" to PatternDef(
+            emptyList(), listOf("s"),
+            listOf(listOf("e", "es"), listOf("e", "ee"), listOf("s"), listOf("se"))
+        ),
+        "XK1" to PatternDef(
+            emptyList(), listOf("s"),
+            listOf(listOf("e"), listOf("e", "ee", "es"), listOf("s", "se"))
+        ),
+        "X1K1" to PatternDef(
+            emptyList(), listOf("s"),
+            listOf(listOf("e"), listOf("e", "ee", "es"), listOf("s"), listOf("se"))
+        ),
+        "X1X" to PatternDef(
+            emptyList(), emptyList(),
+            listOf(listOf("e"), listOf("e", "ee", "s", "es"), listOf("s"), listOf("se"))
+        ),
+        "XX1" to PatternDef(
+            emptyList(), emptyList(),
+            listOf(listOf("e"), listOf("e", "ee", "s"), listOf("es", "s", "se"))
+        ),
+        "X1X1" to PatternDef(
+            emptyList(), emptyList(),
+            listOf(listOf("e"), listOf("e", "ee", "s"), listOf("es", "s"), listOf("se"))
+        ),
+        "K1N" to PatternDef(
+            listOf("s"), emptyList(),
+            listOf(listOf("e"), listOf("e", "ee"), listOf("se"))
+        ),
+        "K1K" to PatternDef(
+            listOf("s"), listOf("s"),
+            listOf(listOf("e", "es"), listOf("e", "ee"), listOf("se"))
+        ),
+        "KK1" to PatternDef(
+            listOf("s"), listOf("s"),
+            listOf(listOf("e"), listOf("e", "ee", "se", "es"))
+        ),
+        "K1K1" to PatternDef(
+            listOf("s"), listOf("s"),
+            listOf(listOf("e"), listOf("e", "ee", "es"), listOf("se"))
+        ),
+        "K1X" to PatternDef(
+            listOf("s"), emptyList(),
+            listOf(listOf("e"), listOf("e", "ee", "s", "es"), listOf("se"))
+        ),
+        "KX1" to PatternDef(
+            listOf("s"), emptyList(),
+            listOf(listOf("e"), listOf("e", "ee", "se", "s"), listOf("es"))
+        ),
+        "K1X1" to PatternDef(
+            listOf("s"), emptyList(),
+            listOf(listOf("e"), listOf("e", "ee", "s"), listOf("se", "es"))
+        ),
+        "I1N" to PatternDef(
+            emptyList(), emptyList(),
+            listOf(listOf("e", "s"), listOf("e", "ee"), listOf("se"))
+        ),
+        "I1K" to PatternDef(
+            emptyList(), listOf("s"),
+            listOf(listOf("e", "es", "s"), listOf("e", "ee"), listOf("se"))
+        ),
+        "IK1" to PatternDef(
+            emptyList(), listOf("s"),
+            listOf(listOf("e", "s"), listOf("e", "ee", "se", "es"))
+        ),
+        "I1K1" to PatternDef(
+            emptyList(), listOf("s"),
+            listOf(listOf("e", "s"), listOf("e", "ee", "es"), listOf("se"))
+        ),
+        "I1X" to PatternDef(
+            emptyList(), emptyList(),
+            listOf(listOf("e", "s"), listOf("e", "ee", "s", "es"), listOf("se"))
+        ),
+        "IX1" to PatternDef(
+            emptyList(), emptyList(),
+            listOf(listOf("e", "s"), listOf("e", "ee", "se", "s"), listOf("es"))
+        ),
+        "I1X1" to PatternDef(
+            emptyList(), emptyList(),
+            listOf(listOf("e", "s"), listOf("e", "ee", "s"), listOf("se", "es"))
+        ),
     )
 
     fun parse(protocolName: String): HandshakeDescriptor {
