@@ -39,6 +39,10 @@ public class NoiseSession {
         return handshakeState.getLocalEphemeralPrivateKey()
     }
 
+    public func getChainingKey() -> Data? {
+        return handshakeState.getChainingKey()
+    }
+
     @discardableResult
     public func writeMessage(_ payload: Data = Data()) throws -> Data {
         guard !isHandshakeComplete else { throw NoiseError.handshakeAlreadyComplete }

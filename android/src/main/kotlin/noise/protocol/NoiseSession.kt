@@ -70,6 +70,8 @@ class NoiseSession(
 
     fun getLocalEphemeralPrivateKey(): ByteArray? = handshakeState.getLocalEphemeralPrivateKey()
 
+    fun getChainingKey(): ByteArray = handshakeState.getChainingKey()
+
     fun split(): TransportSession {
         val (c1, c2) = handshakeState.split()
         val disabled = DisabledCipherState()

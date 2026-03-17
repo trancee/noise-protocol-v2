@@ -47,12 +47,20 @@ class SymmetricState {
         return plaintext
     }
 
+    func getChainingKey() -> Data {
+        return ck
+    }
+
     func split() -> (CipherState, CipherState) {
-        let outputs = hashFn.hkdf(chainingKey: ck, inputKeyMaterial: Data(), numOutputs: 2)
+        var outputs = hashFn.hkdf(chainingKey: ck, inputKeyMaterial: Data(), numOutputs: 2)
         let c1 = CipherState(cipher: cipher)
         c1.setKey(truncateKey(outputs[0]))
         let c2 = CipherState(cipher: cipher)
         c2.setKey(truncateKey(outputs[1]))
+        // Zero chaining key and intermediates
+        for i in ck.indices { ck[i] = 0 }
+        for i in outputs[0].indices { outputs[0][i] = 0 }
+        for i in outputs[1].indices { outputs[1][i] = 0 }
         return (c1, c2)
     }
 

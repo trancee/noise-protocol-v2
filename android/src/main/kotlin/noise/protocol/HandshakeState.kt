@@ -25,6 +25,7 @@ class HandshakeState(
         private set
     private var cipherStatePair: Pair<CipherState, CipherState>? = null
     private val fixedEphemeral: KeyPair? = localEphemeral
+    private var eSecure: SecureBuffer? = null
     private val pskList = psks.toList()
     private var pskIndex = 0
     private val isNoisePSK = descriptor.isNoisePSK
@@ -94,6 +95,7 @@ class HandshakeState(
             when (token) {
                 "e" -> {
                     e = fixedEphemeral ?: dh.generateKeyPair()
+                    eSecure = SecureBuffer.wrap(e!!.privateKey)
                     buffer += e!!.publicKey
                     symmetricState.mixHash(e!!.publicKey)
                     if (isPskHandshake) symmetricState.mixKey(e!!.publicKey)
@@ -147,6 +149,8 @@ class HandshakeState(
 
     fun getLocalEphemeralPrivateKey(): ByteArray? = e?.privateKey
 
+    fun getChainingKey(): ByteArray = symmetricState.getChainingKey()
+
     fun split(): Pair<CipherState, CipherState> {
         if (!isHandshakeComplete) throw NoiseException.HandshakeIncomplete()
         return cipherStatePair!!
@@ -168,6 +172,9 @@ class HandshakeState(
         if (messageIndex >= messagePatterns.size) {
             isHandshakeComplete = true
             cipherStatePair = symmetricState.split()
+            // Zero ephemeral private key material
+            eSecure?.zero()
+            e?.privateKey?.fill(0)
         }
     }
 }

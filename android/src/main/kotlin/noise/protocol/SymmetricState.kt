@@ -63,12 +63,18 @@ class SymmetricState(
         c1.setKey(truncateKey(tempK1))
         val c2 = CipherState(cipher)
         c2.setKey(truncateKey(tempK2))
+        // Zero chaining key and HKDF intermediates
+        ck.fill(0)
+        tempK1.fill(0)
+        tempK2.fill(0)
         return Pair(c1, c2)
     }
 
     fun hasKey(): Boolean = cipherState.hasKey()
 
     fun getHandshakeHash(): ByteArray = h.copyOf()
+
+    fun getChainingKey(): ByteArray = ck.copyOf()
 
     private fun truncateKey(key: ByteArray): ByteArray =
         if (key.size > 32) key.copyOf(32) else key

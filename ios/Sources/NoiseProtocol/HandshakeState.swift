@@ -12,6 +12,7 @@ class HandshakeState {
     private let messagePatterns: [[String]]
     private(set) var isHandshakeComplete = false
     private var cipherStatePair: (CipherState, CipherState)?
+    private var eSecure: SecureBuffer?
     private let fixedEphemeral: KeyPair?
     private let pskList: [Data]
     private var pskIndex = 0
@@ -109,6 +110,7 @@ class HandshakeState {
             switch token {
             case "e":
                 e = fixedEphemeral ?? dhFn.generateKeyPair()
+                eSecure = SecureBuffer.wrap(e!.privateKey)
                 buffer.append(e!.publicKey)
                 symmetricState.mixHash(e!.publicKey)
                 if isPskHandshake { symmetricState.mixKey(e!.publicKey) }
@@ -179,11 +181,16 @@ class HandshakeState {
         symmetricState.mixKey(sharedSecret)
     }
 
+    func getChainingKey() -> Data {
+        return symmetricState.getChainingKey()
+    }
+
     private func advanceHandshake() {
         messageIndex += 1
         if messageIndex >= messagePatterns.count {
             isHandshakeComplete = true
             cipherStatePair = symmetricState.split()
+            eSecure?.zero()
         }
     }
 }
