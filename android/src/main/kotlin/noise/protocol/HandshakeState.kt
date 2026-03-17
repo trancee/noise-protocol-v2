@@ -41,11 +41,23 @@ class HandshakeState(
     remoteEphemeral: ByteArray? = null,
     psks: List<ByteArray> = emptyList()
 ) {
+    /** Constructs a HandshakeState from a [HandshakeConfig]. */
+    constructor(config: HandshakeConfig) : this(
+        protocolName = config.protocolName,
+        role = config.role,
+        dh = config.dh,
+        cipher = config.cipher,
+        hash = config.hash,
+        descriptor = config.descriptor,
+        staticKeyPair = config.staticKeyPair,
+        remoteStaticKey = config.remoteStaticKey,
+        prologue = config.prologue,
+        localEphemeral = config.localEphemeral,
+        remoteEphemeral = config.remoteEphemeral,
+        psks = config.psks
+    )
     private val symmetricState = SymmetricState(protocolName, cipher, hash)
-    private var s: KeyPair? = staticKeyPair
-    private var e: KeyPair? = null
-    private var rs: ByteArray? = remoteStaticKey
-    private var re: ByteArray? = null
+    private val keys = KeyStore(staticKeyPair, remoteStaticKey)
     private var messageIndex = 0
     private val messagePatterns: List<List<String>> = descriptor.messagePatterns
     /** `true` once all handshake message patterns have been processed. */
@@ -62,9 +74,17 @@ class HandshakeState(
     init {
         symmetricState.mixHash(prologue)
 
+        // Upfront PSK count validation
+        val pskTokenCount = messagePatterns.flatten().count { it == "psk" }
+        val requiredPskCount = pskTokenCount + (if (isNoisePSK) 1 else 0)
+        if (requiredPskCount > pskList.size) {
+            throw NoiseException.InvalidKey(
+                "Pattern requires $requiredPskCount PSK(s) but ${pskList.size} provided"
+            )
+        }
+
         // Old NoisePSK_ convention: mix PSK before pre-messages
         if (isNoisePSK) {
-            if (pskList.isEmpty()) throw NoiseException.InvalidKey("PSK required for NoisePSK_ protocol")
             symmetricState.mixPsk(pskList[0])
         }
 
@@ -73,19 +93,19 @@ class HandshakeState(
             when (token) {
                 "e" -> {
                     val key = if (role == Role.INITIATOR) {
-                        e = localEphemeral
+                        keys.e = localEphemeral
                         localEphemeral?.publicKey ?: throw NoiseException.InvalidKey("Initiator ephemeral key required for ${descriptor.pattern} pattern")
                     } else {
-                        re = remoteEphemeral
+                        keys.re = remoteEphemeral
                         remoteEphemeral ?: throw NoiseException.InvalidKey("Remote ephemeral key required for ${descriptor.pattern} pattern")
                     }
                     symmetricState.mixHash(key)
                 }
                 "s" -> {
                     val key = if (role == Role.INITIATOR) {
-                        s?.publicKey ?: throw NoiseException.InvalidKey("Initiator static key required for ${descriptor.pattern} pattern")
+                        keys.s?.publicKey ?: throw NoiseException.InvalidKey("Initiator static key required for ${descriptor.pattern} pattern")
                     } else {
-                        rs ?: throw NoiseException.InvalidKey("Remote static key required for ${descriptor.pattern} pattern")
+                        keys.rs ?: throw NoiseException.InvalidKey("Remote static key required for ${descriptor.pattern} pattern")
                     }
                     symmetricState.mixHash(key)
                 }
@@ -95,19 +115,19 @@ class HandshakeState(
             when (token) {
                 "e" -> {
                     val key = if (role == Role.RESPONDER) {
-                        e = localEphemeral
+                        keys.e = localEphemeral
                         localEphemeral?.publicKey ?: throw NoiseException.InvalidKey("Responder ephemeral key required for ${descriptor.pattern} pattern")
                     } else {
-                        re = remoteEphemeral
+                        keys.re = remoteEphemeral
                         remoteEphemeral ?: throw NoiseException.InvalidKey("Remote ephemeral key required for ${descriptor.pattern} pattern")
                     }
                     symmetricState.mixHash(key)
                 }
                 "s" -> {
                     val key = if (role == Role.RESPONDER) {
-                        s?.publicKey ?: throw NoiseException.InvalidKey("Responder static key required for ${descriptor.pattern} pattern")
+                        keys.s?.publicKey ?: throw NoiseException.InvalidKey("Responder static key required for ${descriptor.pattern} pattern")
                     } else {
-                        rs ?: throw NoiseException.InvalidKey("Remote static key required for ${descriptor.pattern} pattern")
+                        keys.rs ?: throw NoiseException.InvalidKey("Remote static key required for ${descriptor.pattern} pattern")
                     }
                     symmetricState.mixHash(key)
                 }
@@ -133,14 +153,15 @@ class HandshakeState(
         for (token in pattern) {
             when (token) {
                 "e" -> {
-                    e = fixedEphemeral ?: dh.generateKeyPair()
-                    eSecure = SecureBuffer.wrap(e!!.privateKey)
-                    buffer += e!!.publicKey
-                    symmetricState.mixHash(e!!.publicKey)
-                    if (isPskHandshake) symmetricState.mixKey(e!!.publicKey)
+                    keys.e = fixedEphemeral ?: dh.generateKeyPair()
+                    val ePub = keys.requirePublicKey(KeyRef.E)
+                    eSecure = SecureBuffer.wrap(keys.requireKeyPair(KeyRef.E).privateKey)
+                    buffer += ePub
+                    symmetricState.mixHash(ePub)
+                    if (isPskHandshake) symmetricState.mixKey(ePub)
                 }
                 "s" -> {
-                    buffer += symmetricState.encryptAndHash(s!!.publicKey)
+                    buffer += symmetricState.encryptAndHash(keys.requirePublicKey(KeyRef.S))
                 }
                 "psk" -> {
                     if (pskIndex >= pskList.size) throw NoiseException.InvalidKey("Missing PSK at index $pskIndex")
@@ -174,16 +195,16 @@ class HandshakeState(
         for (token in pattern) {
             when (token) {
                 "e" -> {
-                    re = message.copyOfRange(offset, offset + dh.dhLen)
+                    keys.re = message.copyOfRange(offset, offset + dh.dhLen)
                     offset += dh.dhLen
-                    symmetricState.mixHash(re!!)
-                    if (isPskHandshake) symmetricState.mixKey(re!!)
+                    symmetricState.mixHash(keys.requirePublicKey(KeyRef.RE))
+                    if (isPskHandshake) symmetricState.mixKey(keys.requirePublicKey(KeyRef.RE))
                 }
                 "s" -> {
                     val len = if (symmetricState.hasKey()) dh.dhLen + 16 else dh.dhLen
                     val temp = message.copyOfRange(offset, offset + len)
                     offset += len
-                    rs = symmetricState.decryptAndHash(temp)
+                    keys.rs = symmetricState.decryptAndHash(temp)
                 }
                 "psk" -> {
                     if (pskIndex >= pskList.size) throw NoiseException.InvalidKey("Missing PSK at index $pskIndex")
@@ -204,7 +225,7 @@ class HandshakeState(
      *
      * @return The ephemeral private key bytes, or `null`.
      */
-    fun getLocalEphemeralPrivateKey(): ByteArray? = e?.privateKey
+    fun getLocalEphemeralPrivateKey(): ByteArray? = keys.e?.privateKey
 
     /**
      * Returns a copy of the current chaining key from the underlying [SymmetricState].
@@ -228,14 +249,11 @@ class HandshakeState(
     }
 
     private fun processDHToken(token: String) {
-        val sharedSecret = when (token) {
-            "ee" -> dh.dh(e!!, re!!)
-            "es" -> if (role == Role.INITIATOR) dh.dh(e!!, rs!!) else dh.dh(s!!, re!!)
-            "se" -> if (role == Role.INITIATOR) dh.dh(s!!, re!!) else dh.dh(e!!, rs!!)
-            "ss" -> dh.dh(s!!, rs!!)
-            else -> throw NoiseException.InvalidPattern("Unknown token: $token")
-        }
-        symmetricState.mixKey(sharedSecret)
+        val op = DH_DISPATCH[token to role]
+            ?: throw NoiseException.InvalidPattern("Unknown DH token: $token")
+        val localKP = keys.requireKeyPair(op.local)
+        val remoteKey = keys.requirePublicKey(op.remote)
+        symmetricState.mixKey(dh.dh(localKP, remoteKey))
     }
 
     private fun advanceHandshake() {
@@ -245,7 +263,7 @@ class HandshakeState(
             cipherStatePair = symmetricState.split()
             // Zero ephemeral private key material
             eSecure?.zero()
-            e?.privateKey?.fill(0)
+            keys.e?.privateKey?.fill(0)
         }
     }
 }

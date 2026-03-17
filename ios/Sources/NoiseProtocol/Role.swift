@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Each Noise handshake has exactly two participants: an initiator who sends the
 /// first message and a responder who receives it.
-public enum Role: Sendable {
+public enum Role: Sendable, Hashable {
     /// The party that initiates the handshake by sending the first message.
     case initiator
     /// The party that responds to the initiator's first message.

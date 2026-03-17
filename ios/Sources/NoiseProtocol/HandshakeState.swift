@@ -13,10 +13,7 @@ class HandshakeState {
     private let role: Role
     private let dhFn: DH
     private let symmetricState: SymmetricState
-    private var s: KeyPair?
-    private var e: KeyPair?
-    private var rs: Data?
-    private var re: Data?
+    private let keys: KeyStore
     private var messageIndex = 0
     private let messagePatterns: [[String]]
     private(set) var isHandshakeComplete = false
@@ -58,8 +55,7 @@ class HandshakeState {
         self.role = role
         self.dhFn = dh
         self.fixedEphemeral = localEphemeral
-        self.s = staticKeyPair
-        self.rs = remoteStaticKey
+        self.keys = KeyStore(staticKeyPair: staticKeyPair, remoteStaticKey: remoteStaticKey)
         self.pskList = psks
         self.isNoisePSK = descriptor.isNoisePSK
         self.isPskHandshake = descriptor.isNoisePSK || !descriptor.pskPositions.isEmpty
@@ -68,18 +64,24 @@ class HandshakeState {
 
         symmetricState.mixHash(prologue)
 
+        // Upfront PSK count validation
+        let pskTokenCount = messagePatterns.flatMap { $0 }.filter { $0 == "psk" }.count
+        let requiredPskCount = pskTokenCount + (isNoisePSK ? 1 : 0)
+        if requiredPskCount > pskList.count {
+            throw NoiseError.invalidKey(
+                "Pattern requires \(requiredPskCount) PSK(s) but \(pskList.count) provided"
+            )
+        }
+
         // Old NoisePSK_ convention: mix PSK before pre-messages
         if isNoisePSK {
-            guard !pskList.isEmpty else {
-                throw NoiseError.invalidKey("PSK required for NoisePSK_ protocol")
-            }
             symmetricState.mixPsk(pskList[0])
         }
 
         // Process pre-messages: mix known public keys into handshake hash
         for token in descriptor.initiatorPreMessages {
             if token == "s" {
-                guard let key = (role == .initiator ? s?.publicKey : rs) else {
+                guard let key = (role == .initiator ? keys.s?.publicKey : keys.rs) else {
                     throw NoiseError.invalidKey(role == .initiator
                         ? "Initiator static key required for \(descriptor.pattern) pattern"
                         : "Remote static key required for \(descriptor.pattern) pattern")
@@ -90,20 +92,20 @@ class HandshakeState {
                     guard let localEph = localEphemeral else {
                         throw NoiseError.invalidKey("Initiator ephemeral key required for \(descriptor.pattern) pattern")
                     }
-                    self.e = localEph
+                    self.keys.e = localEph
                     symmetricState.mixHash(localEph.publicKey)
                 } else {
                     guard let remEph = remoteEphemeral else {
                         throw NoiseError.invalidKey("Remote ephemeral key required for \(descriptor.pattern) pattern")
                     }
-                    self.re = remEph
+                    self.keys.re = remEph
                     symmetricState.mixHash(remEph)
                 }
             }
         }
         for token in descriptor.responderPreMessages {
             if token == "s" {
-                guard let key = (role == .responder ? s?.publicKey : rs) else {
+                guard let key = (role == .responder ? keys.s?.publicKey : keys.rs) else {
                     throw NoiseError.invalidKey(role == .responder
                         ? "Responder static key required for \(descriptor.pattern) pattern"
                         : "Remote static key required for \(descriptor.pattern) pattern")
@@ -114,24 +116,42 @@ class HandshakeState {
                     guard let localEph = localEphemeral else {
                         throw NoiseError.invalidKey("Responder ephemeral key required for \(descriptor.pattern) pattern")
                     }
-                    self.e = localEph
+                    self.keys.e = localEph
                     symmetricState.mixHash(localEph.publicKey)
                 } else {
                     guard let remEph = remoteEphemeral else {
                         throw NoiseError.invalidKey("Remote ephemeral key required for \(descriptor.pattern) pattern")
                     }
-                    self.re = remEph
+                    self.keys.re = remEph
                     symmetricState.mixHash(remEph)
                 }
             }
         }
     }
 
+    /// Creates a HandshakeState from a HandshakeConfig.
+    convenience init(config: HandshakeConfig) throws {
+        try self.init(
+            protocolName: config.protocolName,
+            role: config.role,
+            dh: config.dh,
+            cipher: config.cipher,
+            hash: config.hash,
+            descriptor: config.descriptor,
+            staticKeyPair: config.staticKeyPair,
+            remoteStaticKey: config.remoteStaticKey,
+            prologue: config.prologue,
+            localEphemeral: config.localEphemeral,
+            remoteEphemeral: config.remoteEphemeral,
+            psks: config.psks
+        )
+    }
+
     /// Returns the local ephemeral private key, if one has been generated.
     ///
     /// - Returns: The ephemeral private key data, or `nil` if not yet generated.
     func getLocalEphemeralPrivateKey() -> Data? {
-        return e?.privateKey
+        return keys.e?.privateKey
     }
 
     /// Constructs and sends the next handshake message.
@@ -151,13 +171,14 @@ class HandshakeState {
         for token in pattern {
             switch token {
             case "e":
-                e = fixedEphemeral ?? dhFn.generateKeyPair()
-                eSecure = SecureBuffer.wrap(e!.privateKey)
-                buffer.append(e!.publicKey)
-                symmetricState.mixHash(e!.publicKey)
-                if isPskHandshake { symmetricState.mixKey(e!.publicKey) }
+                keys.e = fixedEphemeral ?? dhFn.generateKeyPair()
+                let ePub = try keys.requirePublicKey(.e)
+                eSecure = SecureBuffer.wrap(try keys.requireKeyPair(.e).privateKey)
+                buffer.append(ePub)
+                symmetricState.mixHash(ePub)
+                if isPskHandshake { symmetricState.mixKey(ePub) }
             case "s":
-                buffer.append(try symmetricState.encryptAndHash(s!.publicKey))
+                buffer.append(try symmetricState.encryptAndHash(try keys.requirePublicKey(.s)))
             case "psk":
                 guard pskIndex < pskList.count else {
                     throw NoiseError.invalidKey("Missing PSK at index \(pskIndex)")
@@ -189,15 +210,16 @@ class HandshakeState {
         for token in pattern {
             switch token {
             case "e":
-                re = message.subdata(in: offset..<(offset + dhFn.dhLen))
+                keys.re = message.subdata(in: offset..<(offset + dhFn.dhLen))
                 offset += dhFn.dhLen
-                symmetricState.mixHash(re!)
-                if isPskHandshake { symmetricState.mixKey(re!) }
+                let rePub = try keys.requirePublicKey(.re)
+                symmetricState.mixHash(rePub)
+                if isPskHandshake { symmetricState.mixKey(rePub) }
             case "s":
                 let len = symmetricState.hasKey() ? dhFn.dhLen + 16 : dhFn.dhLen
                 let temp = message.subdata(in: offset..<(offset + len))
                 offset += len
-                rs = try symmetricState.decryptAndHash(temp)
+                keys.rs = try symmetricState.decryptAndHash(temp)
             case "psk":
                 guard pskIndex < pskList.count else {
                     throw NoiseError.invalidKey("Missing PSK at index \(pskIndex)")
@@ -227,15 +249,13 @@ class HandshakeState {
     }
 
     private func processDHToken(_ token: String) throws {
-        let sharedSecret: Data
-        switch token {
-        case "ee": sharedSecret = try dhFn.dh(keyPair: e!, publicKey: re!)
-        case "es": sharedSecret = role == .initiator ? try dhFn.dh(keyPair: e!, publicKey: rs!) : try dhFn.dh(keyPair: s!, publicKey: re!)
-        case "se": sharedSecret = role == .initiator ? try dhFn.dh(keyPair: s!, publicKey: re!) : try dhFn.dh(keyPair: e!, publicKey: rs!)
-        case "ss": sharedSecret = try dhFn.dh(keyPair: s!, publicKey: rs!)
-        default: fatalError("Unknown token: \(token)")
+        guard let tokenMap = DH_DISPATCH[token],
+              let op = tokenMap[role] else {
+            throw NoiseError.invalidPattern("Unknown DH token: \(token)")
         }
-        symmetricState.mixKey(sharedSecret)
+        let localKP = try keys.requireKeyPair(op.local)
+        let remoteKey = try keys.requirePublicKey(op.remote)
+        symmetricState.mixKey(try dhFn.dh(keyPair: localKP, publicKey: remoteKey))
     }
 
     /// Returns the current chaining key from the underlying symmetric state.
