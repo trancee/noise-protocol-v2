@@ -35,6 +35,7 @@ class NoiseSession(
     companion object {
         fun resolveDH(name: String): DH = when (name) {
             "25519" -> Curve25519DH
+            "448" -> X448DH
             else -> throw NoiseException.InvalidPattern("Unsupported DH: $name")
         }
 

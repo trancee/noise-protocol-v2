@@ -56,6 +56,7 @@ public class NoiseSession {
     static func resolveDH(_ name: String) -> DH {
         switch name {
         case "25519": return Curve25519DH()
+        case "448": return X448DH_()
         default: fatalError("Unsupported DH: \(name)")
         }
     }

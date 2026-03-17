@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Security
 
 public protocol DH: Sendable {
     var dhLen: Int { get }
@@ -74,6 +75,25 @@ public struct Curve25519DH: DH {
         let pubKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: publicKey)
         let shared = try privateKey.sharedSecretFromKeyAgreement(with: pubKey)
         return shared.withUnsafeBytes { Data($0) }
+    }
+}
+
+public struct X448DH_: DH {
+    public let dhLen = 56
+
+    public init() {}
+
+    public func generateKeyPair() -> KeyPair {
+        var privateKey = Data(count: 56)
+        _ = privateKey.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 56, $0.baseAddress!) }
+        var basePoint = Data(count: 56)
+        basePoint[0] = 5
+        let publicKey = X448_.scalarMult(k: privateKey, u: basePoint)
+        return KeyPair(privateKey: privateKey, publicKey: publicKey)
+    }
+
+    public func dh(keyPair: KeyPair, publicKey: Data) throws -> Data {
+        return X448_.scalarMult(k: keyPair.privateKey, u: publicKey)
     }
 }
 

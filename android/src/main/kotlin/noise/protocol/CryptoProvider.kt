@@ -96,6 +96,21 @@ object Curve25519DH : DH {
     }
 }
 
+object X448DH : DH {
+    override val dhLen = 56
+
+    override fun generateKeyPair(): KeyPair {
+        val privateKey = ByteArray(56).also { java.security.SecureRandom().nextBytes(it) }
+        val basePoint = ByteArray(56).also { it[0] = 5 }
+        val publicKey = X448.scalarMult(privateKey, basePoint)
+        return KeyPair(privateKey, publicKey)
+    }
+
+    override fun dh(keyPair: KeyPair, publicKey: ByteArray): ByteArray {
+        return X448.scalarMult(keyPair.privateKey, publicKey)
+    }
+}
+
 // Noise spec: 4 bytes zeros + 8 bytes little-endian nonce = 12 bytes
 private fun nonceToBytes(nonce: Long): ByteArray {
     val bytes = ByteArray(12)
