@@ -116,8 +116,8 @@ public struct ChaChaPoly_: CipherFunction {
         let symmetricKey = SymmetricKey(data: key)
         let cryptoNonce = try ChaChaPoly.Nonce(data: nonceToBytes(nonce))
         let tagStart = ciphertext.count - 16
-        let ct = ciphertext.prefix(tagStart)
-        let tag = ciphertext.suffix(16)
+        let ct = Data(ciphertext.prefix(tagStart))
+        let tag = Data(ciphertext.suffix(16))
         let sealedBox = try ChaChaPoly.SealedBox(nonce: cryptoNonce, ciphertext: ct, tag: tag)
         return try ChaChaPoly.open(sealedBox, using: symmetricKey, authenticating: ad)
     }
@@ -137,8 +137,8 @@ public struct AESGCM_: CipherFunction {
         let symmetricKey = SymmetricKey(data: key)
         let cryptoNonce = try AES.GCM.Nonce(data: nonceToBytes(nonce))
         let tagStart = ciphertext.count - 16
-        let ct = ciphertext.prefix(tagStart)
-        let tag = ciphertext.suffix(16)
+        let ct = Data(ciphertext.prefix(tagStart))
+        let tag = Data(ciphertext.suffix(16))
         let sealedBox = try AES.GCM.SealedBox(nonce: cryptoNonce, ciphertext: ct, tag: tag)
         return try AES.GCM.open(sealedBox, using: symmetricKey, authenticating: ad)
     }
