@@ -14,7 +14,7 @@ Both platforms share test vectors but are otherwise fully independent codebases 
 
 - **All 12 fundamental handshake patterns**: NN, NK, NX, KN, KK, KX, XN, XK, XX, IN, IK, IX
 - **One-way patterns**: N, K, X
-- **19 deferred patterns**: NK1, NX1, X1N, X1K, XK1, X1K1, X1X, XX1, X1X1, K1N, K1K, KK1, K1K1, K1X, KX1, K1X1, I1N, I1K, IK1, I1K1, I1X, IX1, I1X1
+- **23 deferred patterns**: NK1, NX1, X1N, X1K, XK1, X1K1, X1X, XX1, X1X1, K1N, K1K, KK1, K1K1, K1X, KX1, K1X1, I1N, I1K, IK1, I1K1, I1X, IX1, I1X1
 - **PSK modifier**: 0–9 positions on any pattern
 - **Fallback modifier**: IK → XXfallback pattern switching
 - **DH functions**: Curve25519, X448
@@ -156,6 +156,24 @@ val session = NoiseSession(
 )
 ```
 
+### Custom CryptoResolver
+
+Override algorithm wiring for testing or to provide alternative implementations:
+
+```kotlin
+val customCrypto = DefaultCryptoResolver.Builder()
+    .dh("25519") { Curve25519DH }
+    .cipher("ChaChaPoly") { ChaChaPoly }
+    .hash("SHA256") { SHA256Hash }
+    .build()
+
+val session = NoiseSession(
+    protocolName = "Noise_NN_25519_ChaChaPoly_SHA256",
+    role = Role.INITIATOR,
+    crypto = customCrypto
+)
+```
+
 ## Protocol Name Format
 
 Protocol names follow the Noise specification format:
@@ -180,25 +198,110 @@ Examples:
 
 ## Architecture
 
+The library follows a layered architecture where each module has a single responsibility.
+Upper layers depend only on the layer directly below.
+
+```mermaid
+graph TD
+    NS["<b>NoiseSession</b><br/>Public API — parses protocol name,<br/>orchestrates handshake + transport"]
+    HS["<b>HandshakeState</b><br/>Drives message patterns & DH tokens"]
+    HC["<b>HandshakeConfig</b><br/>Immutable config (keys, PSKs, role)"]
+    KS["<b>KeyStore</b> + <b>DhDispatch</b><br/>Key state management & DH routing"]
+    SS["<b>SymmetricState</b><br/>Chaining key, handshake hash, mix ops"]
+    PP["<b>PatternParser</b><br/>Protocol name → tokens (thin orchestrator)"]
+    PR["<b>PatternRegistry</b><br/>38 patterns: 12 fundamental, 3 one-way, 23 deferred"]
+    MOD["<b>Modifiers</b><br/>fallback + PSK token insertion"]
+    CS["<b>CipherState</b><br/>AEAD encrypt/decrypt, nonce, rekey"]
+    CR["<b>CryptoResolver</b><br/>Algorithm name → implementation"]
+    CP["<b>CryptoProvider</b><br/>DH · Cipher · Hash implementations"]
+
+    NS --> HS
+    NS --> PP
+    NS --> CR
+    HS --> HC
+    HS --> KS
+    HS --> SS
+    PP --> PR
+    PP --> MOD
+    SS --> CS
+    CR --> CP
+    CS --> CP
 ```
-┌─────────────────────────────────────────────┐
-│              NoiseSession (API)              │
-│  parses protocol name, orchestrates flow    │
-├─────────────────────────────────────────────┤
-│            HandshakeState                   │
-│  drives message patterns, DH tokens        │
-├──────────────────┬──────────────────────────┤
-│  SymmetricState  │    PatternParser         │
-│  ck, h, mix ops  │    pattern → tokens      │
-├──────────────────┤                          │
-│   CipherState    │                          │
-│   k, n, encrypt  │                          │
-├──────────────────┴──────────────────────────┤
-│             CryptoProvider                  │
-│  DH: Curve25519, X448                       │
-│  Cipher: ChaChaPoly, AESGCM                │
-│  Hash: SHA256, SHA512, BLAKE2b, BLAKE2s     │
-└─────────────────────────────────────────────┘
+
+### Session Lifecycle
+
+A `NoiseSession` progresses through three phases:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Handshake : NoiseSession(protocolName, role, ...)
+    Handshake --> Handshake : writeMessage() / readMessage()
+    Handshake --> Ready : All pattern messages exchanged
+    Ready --> Transport : split() → (sender, receiver)
+    Transport --> Transport : sender.encryptWithAd() / receiver.decryptWithAd()
+    Transport --> [*] : Session complete
+```
+
+### Handshake Message Flow (XX Pattern)
+
+The XX pattern authenticates both parties over three messages:
+
+```mermaid
+sequenceDiagram
+    participant I as Initiator
+    participant R as Responder
+
+    Note over I,R: Handshake Phase
+    I->>R: msg1 → e
+    R->>I: msg2 → e, ee, s, es
+    I->>R: msg3 → s, se
+
+    Note over I,R: split() → Transport Phase
+    I->>R: encryptWithAd(plaintext)
+    R->>I: encryptWithAd(plaintext)
+```
+
+### Protocol Name Parsing Pipeline
+
+`PatternParser.parse()` decomposes a protocol name into a fully resolved handshake descriptor:
+
+```mermaid
+flowchart LR
+    Input["Noise_IKpsk2_25519_ChaChaPoly_SHA256"]
+    Split["Split on _<br/>prefix · pattern · dh · cipher · hash"]
+    Lookup["PatternRegistry<br/>look up base pattern IK"]
+    Fallback{"fallback<br/>modifier?"}
+    PSK{"psk<br/>modifier?"}
+    Apply["Modifiers.applyFallback()"]
+    Insert["Modifiers.insertPskTokens()"]
+    Output["HandshakeDescriptor<br/>pre-messages + token sequences"]
+
+    Input --> Split --> Lookup --> Fallback
+    Fallback -- Yes --> Apply --> PSK
+    Fallback -- No --> PSK
+    PSK -- Yes --> Insert --> Output
+    PSK -- No --> Output
+```
+
+### Algorithm Resolution
+
+`CryptoResolver` maps algorithm names to implementations. The default resolver wires all eight standard algorithms; custom resolvers can override or extend:
+
+```mermaid
+flowchart LR
+    subgraph CryptoResolver
+        direction TB
+        DH["DH Registry<br/>25519 → Curve25519DH<br/>448 → X448DH"]
+        C["Cipher Registry<br/>ChaChaPoly → ChaCha20-Poly1305<br/>AESGCM → AES-256-GCM"]
+        H["Hash Registry<br/>SHA256 · SHA512<br/>BLAKE2b · BLAKE2s"]
+    end
+
+    Name["resolve(dh, cipher, hash)"] --> DH
+    Name --> C
+    Name --> H
+    DH --> Suite["CryptoSuite<br/>(dh, cipher, hash)"]
+    C --> Suite
+    H --> Suite
 ```
 
 ## Security Considerations
@@ -238,10 +341,10 @@ cd ios && swift build
 ### Running Tests
 
 ```bash
-# Kotlin (97 tests)
+# Kotlin (127 tests)
 cd android && gradle test
 
-# Swift (87 tests)
+# Swift (69 tests)
 cd ios && swift test
 ```
 
@@ -275,30 +378,54 @@ cd ios && swift test -c release --filter BenchmarkTests
 │   ├── build.gradle.kts      # Gradle build + Maven publishing
 │   └── src/
 │       ├── main/kotlin/noise/protocol/
-│       │   ├── NoiseSession.kt       # Public API
+│       │   ├── NoiseSession.kt       # Public API entry point
 │       │   ├── HandshakeState.kt     # Handshake driver
+│       │   ├── HandshakeConfig.kt    # Immutable handshake configuration
 │       │   ├── SymmetricState.kt     # Symmetric key management
-│       │   ├── CipherState.kt        # Encryption/decryption
-│       │   ├── CryptoProvider.kt     # All crypto primitives
-│       │   ├── PatternParser.kt      # Protocol name parsing
+│       │   ├── CipherState.kt        # AEAD encryption/decryption
+│       │   ├── CryptoProvider.kt     # DH, Cipher, Hash implementations
+│       │   ├── CryptoResolver.kt     # Algorithm name → implementation
+│       │   ├── CryptoSuite.kt        # (DH, Cipher, Hash) tuple
+│       │   ├── PatternParser.kt      # Protocol name → tokens (orchestrator)
+│       │   ├── PatternRegistry.kt    # 38 standard pattern definitions
+│       │   ├── PatternDef.kt         # Pattern data structure
+│       │   ├── Modifiers.kt          # Fallback + PSK modifiers
+│       │   ├── NoiseException.kt     # Error hierarchy
+│       │   ├── KeyStore.kt           # Key state with domain errors
+│       │   ├── DhDispatch.kt         # Role-conditional DH routing
+│       │   ├── KeyPair.kt            # DH key pair
+│       │   ├── Role.kt               # INITIATOR / RESPONDER
 │       │   ├── SecureMemory.kt       # Secret zeroing
+│       │   ├── X448.kt               # Pure X448 DH
 │       │   └── Benchmark.kt          # Benchmark harness
 │       └── test/kotlin/noise/protocol/
-│           └── *.kt                  # 97 tests
+│           └── *.kt                  # 127 tests
 ├── ios/                      # Swift implementation
 │   ├── Package.swift         # SPM manifest
 │   └── Sources/NoiseProtocol/
-│       ├── NoiseProtocol.swift       # Public API
-│       ├── HandshakeState.swift      # Handshake driver
-│       ├── SymmetricState.swift      # Symmetric key management
-│       ├── CipherState.swift         # Encryption/decryption
-│       ├── CryptoProvider.swift      # Platform crypto + BLAKE2
-│       ├── X448.swift                # Pure X448 DH
-│       ├── PatternParser.swift       # Protocol name parsing
-│       ├── SecureBuffer.swift        # Secret zeroing
-│       └── Benchmark.swift           # Benchmark harness
-├── test-vectors/             # Shared JSON test vectors
-├── plans/                    # Implementation plan
+│       │   ├── NoiseProtocol.swift       # Public API entry point
+│       │   ├── HandshakeState.swift      # Handshake driver
+│       │   ├── HandshakeConfig.swift     # Immutable handshake configuration
+│       │   ├── SymmetricState.swift      # Symmetric key management
+│       │   ├── CipherState.swift         # AEAD encryption/decryption
+│       │   ├── CryptoProvider.swift      # Platform crypto + BLAKE2
+│       │   ├── CryptoResolver.swift      # Algorithm name → implementation
+│       │   ├── CryptoSuite.swift         # (DH, Cipher, Hash) tuple
+│       │   ├── PatternParser.swift       # Protocol name → tokens (orchestrator)
+│       │   ├── PatternRegistry.swift     # 38 standard pattern definitions
+│       │   ├── PatternDef.swift          # Pattern data structure
+│       │   ├── Modifiers.swift           # Fallback + PSK modifiers
+│       │   ├── NoiseError.swift          # Error types
+│       │   ├── KeyStore.swift            # Key state with domain errors
+│       │   ├── DhDispatch.swift          # Role-conditional DH routing
+│       │   ├── KeyPair.swift             # DH key pair
+│       │   ├── Role.swift                # initiator / responder
+│       │   ├── SecureBuffer.swift        # Secret zeroing
+│       │   ├── X448.swift                # Pure X448 DH
+│       │   └── Benchmark.swift           # Benchmark harness
+│       └── Tests/NoiseProtocolTests/
+│           └── *.swift               # 69 tests
+├── test-vectors/             # Shared JSON test vectors (cacophony format)
 └── LICENSE                   # Unlicense (public domain)
 ```
 
