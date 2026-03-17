@@ -1,5 +1,14 @@
 import Foundation
 
+/// Manages the state machine for a Noise Protocol handshake.
+///
+/// `HandshakeState` processes handshake message patterns token by token, performing
+/// DH operations, key mixing, and encryption/decryption as dictated by the chosen
+/// Noise pattern. After all message patterns are processed, it produces two
+/// ``CipherState`` instances for transport-phase communication.
+///
+/// This class implements the `HandshakeState` object from Section 5.3 of the
+/// [Noise Protocol specification](https://noiseprotocol.org/noise.html).
 class HandshakeState {
     private let role: Role
     private let dhFn: DH
@@ -19,6 +28,26 @@ class HandshakeState {
     private let isNoisePSK: Bool
     private let isPskHandshake: Bool
 
+    /// Creates a new handshake state for the given protocol configuration.
+    ///
+    /// Initializes the symmetric state with the protocol name, processes pre-message
+    /// patterns (mixing known public keys into the handshake hash), and handles legacy
+    /// `NoisePSK_` prefix conventions.
+    ///
+    /// - Parameters:
+    ///   - protocolName: The full Noise protocol name (e.g., `"Noise_XX_25519_ChaChaPoly_SHA256"`).
+    ///   - role: Whether this party is the initiator or responder.
+    ///   - dh: The Diffie-Hellman function to use.
+    ///   - cipher: The AEAD cipher function to use.
+    ///   - hash: The hash function to use.
+    ///   - descriptor: The parsed handshake pattern descriptor.
+    ///   - staticKeyPair: The local static key pair, if required by the pattern.
+    ///   - remoteStaticKey: The remote party's static public key, if known in advance.
+    ///   - prologue: Application-specific prologue data mixed into the handshake hash.
+    ///   - localEphemeral: A fixed local ephemeral key pair (for testing or pre-message patterns).
+    ///   - remoteEphemeral: The remote ephemeral public key, if known from a pre-message.
+    ///   - psks: Pre-shared keys for PSK handshake patterns, in order of use.
+    /// - Throws: ``NoiseError/invalidKey(_:)`` if required keys are missing for the pattern.
     init(protocolName: String, role: Role, dh: DH, cipher: CipherFunction,
          hash: HashFunction, descriptor: HandshakeDescriptor,
          staticKeyPair: KeyPair? = nil,
@@ -98,10 +127,23 @@ class HandshakeState {
         }
     }
 
+    /// Returns the local ephemeral private key, if one has been generated.
+    ///
+    /// - Returns: The ephemeral private key data, or `nil` if not yet generated.
     func getLocalEphemeralPrivateKey() -> Data? {
         return e?.privateKey
     }
 
+    /// Constructs and sends the next handshake message.
+    ///
+    /// Processes the current message pattern's tokens (generating ephemeral keys,
+    /// performing DH operations, encrypting static keys) and appends an encrypted
+    /// payload. Advances the handshake state; if this is the final message, the
+    /// handshake completes and cipher states become available via ``split()``.
+    ///
+    /// - Parameter payload: Optional payload data to include in the handshake message.
+    /// - Returns: The serialized handshake message bytes.
+    /// - Throws: ``NoiseError`` if keys are missing or encryption fails.
     func writeMessage(payload: Data = Data()) throws -> Data {
         let pattern = messagePatterns[messageIndex]
         var buffer = Data()
@@ -132,6 +174,14 @@ class HandshakeState {
         return buffer
     }
 
+    /// Processes a received handshake message and extracts its payload.
+    ///
+    /// Parses the message according to the current message pattern's tokens, extracting
+    /// public keys, performing DH operations, and decrypting. Advances the handshake state.
+    ///
+    /// - Parameter message: The raw handshake message bytes received from the peer.
+    /// - Returns: The decrypted payload contained in the message.
+    /// - Throws: ``NoiseError`` if decryption fails or keys are missing.
     func readMessage(_ message: Data) throws -> Data {
         let pattern = messagePatterns[messageIndex]
         var offset = 0
@@ -164,6 +214,13 @@ class HandshakeState {
         return payload
     }
 
+    /// Splits the handshake state into two cipher states for transport-phase communication.
+    ///
+    /// Must only be called after the handshake is complete.
+    ///
+    /// - Returns: A tuple of (`CipherState`, `CipherState`): the first for the initiator's
+    ///   sending direction, the second for the responder's sending direction.
+    /// - Throws: ``NoiseError/handshakeNotComplete`` if the handshake has not finished.
     func split() throws -> (CipherState, CipherState) {
         guard isHandshakeComplete else { throw NoiseError.handshakeNotComplete }
         return cipherStatePair!
@@ -181,6 +238,9 @@ class HandshakeState {
         symmetricState.mixKey(sharedSecret)
     }
 
+    /// Returns the current chaining key from the underlying symmetric state.
+    ///
+    /// - Returns: The chaining key data.
     func getChainingKey() -> Data {
         return symmetricState.getChainingKey()
     }

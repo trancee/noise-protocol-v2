@@ -1,24 +1,41 @@
 import Foundation
 
+/// The result of a single benchmark measurement.
 public struct BenchmarkResult: Sendable {
+    /// The name identifying this benchmark.
     public let name: String
+    /// The number of iterations measured.
     public let iterations: Int
+    /// The total elapsed time in nanoseconds.
     public let totalNs: Int64
+    /// The computed operations per second.
     public let opsPerSec: Double
+    /// The average time per operation in nanoseconds.
     public let avgNs: Double
 }
 
+/// A comparison between a baseline and current benchmark measurement.
 public struct BenchmarkComparison: Sendable {
+    /// The name of the benchmark being compared.
     public let name: String
+    /// The baseline operations per second.
     public let baselineOpsPerSec: Double
+    /// The current operations per second.
     public let currentOpsPerSec: Double
+    /// The speedup ratio (current / baseline). Values > 1.0 indicate improvement.
     public let speedup: Double
+    /// Whether the current result is faster than the baseline.
     public let improved: Bool
 }
 
+/// A report comparing current benchmark results against a baseline.
 public struct ComparisonReport: Sendable {
+    /// The individual benchmark comparisons.
     public let comparisons: [BenchmarkComparison]
 
+    /// Formats the comparison report as a human-readable summary table.
+    ///
+    /// - Returns: A multi-line string with columns for baseline, current, speedup, and status.
     public func toSummary() -> String {
         var lines = [String]()
         let header = "Benchmark" + String(repeating: " ", count: 21) +
@@ -38,11 +55,18 @@ public struct ComparisonReport: Sendable {
     }
 }
 
+/// A collection of benchmark results with metadata, supporting JSON serialization and baseline comparison.
 public struct BenchmarkSuite: Sendable {
+    /// The platform identifier (e.g., OS and hardware description).
     public let platform: String
+    /// The ISO 8601 timestamp when the suite was run.
     public let timestamp: String
+    /// The individual benchmark results.
     public let results: [BenchmarkResult]
 
+    /// Serializes the suite to a JSON string.
+    ///
+    /// - Returns: A formatted JSON string containing all results and metadata.
     public func toJson() -> String {
         var lines = [String]()
         lines.append("{")
@@ -63,15 +87,28 @@ public struct BenchmarkSuite: Sendable {
         return lines.joined(separator: "\n")
     }
 
+    /// Saves the benchmark suite as JSON to the specified file URL.
+    ///
+    /// - Parameter url: The file URL to write the JSON data to.
+    /// - Throws: An error if the file cannot be written.
     public func saveToFile(_ url: URL) throws {
         try toJson().write(to: url, atomically: true, encoding: .utf8)
     }
 
+    /// Loads a benchmark suite from a JSON file.
+    ///
+    /// - Parameter url: The file URL to read.
+    /// - Returns: A deserialized `BenchmarkSuite`.
+    /// - Throws: An error if the file cannot be read.
     public static func loadFromFile(_ url: URL) throws -> BenchmarkSuite {
         let json = try String(contentsOf: url, encoding: .utf8)
         return fromJson(json)
     }
 
+    /// Parses a benchmark suite from a JSON string.
+    ///
+    /// - Parameter json: The JSON string to parse.
+    /// - Returns: A deserialized `BenchmarkSuite`.
     public static func fromJson(_ json: String) -> BenchmarkSuite {
         let platform = json.extractString("platform")
         let timestamp = json.extractString("timestamp")
@@ -102,6 +139,13 @@ public struct BenchmarkSuite: Sendable {
         return BenchmarkSuite(platform: platform, timestamp: timestamp, results: results)
     }
 
+    /// Compares this suite's results against a baseline suite.
+    ///
+    /// For each benchmark in this suite, finds the matching baseline result by name
+    /// and computes the speedup ratio.
+    ///
+    /// - Parameter baseline: The baseline suite to compare against.
+    /// - Returns: A ``ComparisonReport`` with per-benchmark comparisons.
     public func compareToBaseline(_ baseline: BenchmarkSuite) -> ComparisonReport {
         var baselineByName = [String: BenchmarkResult]()
         for r in baseline.results { baselineByName[r.name] = r }
@@ -121,15 +165,36 @@ public struct BenchmarkSuite: Sendable {
     }
 }
 
+/// Runs benchmark closures with configurable warmup and measurement iterations.
+///
+/// `BenchmarkRunner` handles the warmup phase to allow JIT and cache effects to stabilize,
+/// then measures the specified number of iterations to produce accurate timing results.
 public final class BenchmarkRunner: Sendable {
+    /// The number of warmup iterations to run before measuring.
     public let warmupIterations: Int
+    /// The number of iterations to measure for timing.
     public let measureIterations: Int
 
+    /// Creates a new benchmark runner.
+    ///
+    /// - Parameters:
+    ///   - warmupIterations: The number of warmup iterations (default: 100).
+    ///   - measureIterations: The number of measured iterations (default: 1000).
     public init(warmupIterations: Int = 100, measureIterations: Int = 1000) {
         self.warmupIterations = warmupIterations
         self.measureIterations = measureIterations
     }
 
+    /// Runs a benchmark with the given name and closure.
+    ///
+    /// Executes the warmup phase, then measures the closure for the configured number
+    /// of iterations, computing total time, average time, and operations per second.
+    ///
+    /// - Parameters:
+    ///   - name: A descriptive name for this benchmark.
+    ///   - block: The closure to benchmark. Called once per iteration.
+    /// - Returns: A ``BenchmarkResult`` with timing statistics.
+    /// - Throws: Rethrows any error thrown by the block.
     public func run(_ name: String, block: () throws -> Void) rethrows -> BenchmarkResult {
         // Warmup
         for _ in 0..<warmupIterations { try block() }

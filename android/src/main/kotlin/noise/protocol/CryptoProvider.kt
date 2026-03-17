@@ -7,28 +7,132 @@ import javax.crypto.KeyAgreement
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+/**
+ * Abstraction for a Diffie-Hellman key-agreement function as defined by the
+ * Noise Protocol Framework (Section 4.1).
+ *
+ * Implementations must be thread-safe.
+ *
+ * @see Curve25519DH
+ * @see X448DH
+ */
 interface DH {
+    /** The length of a public key in bytes (also the DH output length). */
     val dhLen: Int
+
+    /**
+     * Generates a new random DH key pair.
+     *
+     * @return A fresh [KeyPair] with [dhLen]-byte keys.
+     */
     fun generateKeyPair(): KeyPair
+
+    /**
+     * Performs a Diffie-Hellman key agreement.
+     *
+     * @param keyPair The local key pair (private key is used).
+     * @param publicKey The remote party's public key ([dhLen] bytes).
+     * @return The shared secret ([dhLen] bytes).
+     */
     fun dh(keyPair: KeyPair, publicKey: ByteArray): ByteArray
 }
 
+/**
+ * Abstraction for an AEAD cipher function as defined by the Noise Protocol
+ * Framework (Section 4.2).
+ *
+ * Each implementation provides authenticated encryption with associated data (AEAD)
+ * using a 256-bit key, a 64-bit nonce, and arbitrary associated data.
+ *
+ * Implementations must be thread-safe.
+ *
+ * @see ChaChaPoly
+ * @see AESGCM
+ */
 interface CipherFunction {
+    /**
+     * Encrypts [plaintext] with the given [key], [nonce], and associated data [ad].
+     *
+     * @param key The 256-bit (32-byte) encryption key.
+     * @param nonce The 64-bit nonce value.
+     * @param ad Associated data to authenticate but not encrypt.
+     * @param plaintext The data to encrypt.
+     * @return The ciphertext including a 16-byte authentication tag appended.
+     */
     fun encrypt(key: ByteArray, nonce: Long, ad: ByteArray, plaintext: ByteArray): ByteArray
+
+    /**
+     * Decrypts [ciphertext] with the given [key], [nonce], and associated data [ad].
+     *
+     * @param key The 256-bit (32-byte) decryption key.
+     * @param nonce The 64-bit nonce value.
+     * @param ad Associated data that was authenticated during encryption.
+     * @param ciphertext The data to decrypt (including the 16-byte authentication tag).
+     * @return The decrypted plaintext.
+     * @throws javax.crypto.AEADBadTagException If authentication fails.
+     */
     fun decrypt(key: ByteArray, nonce: Long, ad: ByteArray, ciphertext: ByteArray): ByteArray
 }
 
+/**
+ * Abstraction for a hash function as defined by the Noise Protocol Framework (Section 4.3).
+ *
+ * Provides basic hashing plus HMAC and HKDF (used internally by [SymmetricState]).
+ *
+ * Implementations must be thread-safe.
+ *
+ * @see SHA256Hash
+ * @see SHA512Hash
+ * @see Blake2bHash
+ * @see Blake2sHash
+ */
 interface HashFunction {
+    /** The output length of this hash function in bytes. */
     val hashLen: Int
+
+    /** The internal block length of this hash function in bytes. */
     val blockLen: Int
+
+    /**
+     * Computes the hash digest of [data].
+     *
+     * @param data The input bytes to hash.
+     * @return The [hashLen]-byte digest.
+     */
     fun hash(data: ByteArray): ByteArray
+
+    /**
+     * Computes the hash digest of the concatenation of [a] and [b].
+     *
+     * This overload may be more efficient than manually concatenating
+     * the arrays when the implementation supports incremental hashing.
+     *
+     * @param a The first input bytes.
+     * @param b The second input bytes.
+     * @return The [hashLen]-byte digest of `a || b`.
+     */
     fun hash(a: ByteArray, b: ByteArray): ByteArray = hash(a + b)
+    /**
+     * Computes an HMAC using this hash function as specified by RFC 2104.
+     *
+     * @param key The HMAC key (will be hashed if longer than [blockLen]).
+     * @param data The message to authenticate.
+     * @return The [hashLen]-byte HMAC output.
+     */
     fun hmacHash(key: ByteArray, data: ByteArray): ByteArray {
         val paddedKey = if (key.size > blockLen) hash(key) else key
         val ipad = ByteArray(blockLen) { if (it < paddedKey.size) (paddedKey[it].toInt() xor 0x36).toByte() else 0x36 }
         val opad = ByteArray(blockLen) { if (it < paddedKey.size) (paddedKey[it].toInt() xor 0x5c).toByte() else 0x5c }
         return hash(opad + hash(ipad + data))
     }
+    /**
+     * Derives keys using HKDF as specified by the Noise Protocol Framework (Section 4.3).
+     *
+     * @param chainingKey The chaining key used as the HKDF salt.
+     * @param inputKeyMaterial The input key material.
+     * @param numOutputs The number of output keys to derive (2 or 3).
+     * @return A list of [numOutputs] derived keys, each [hashLen] bytes long.
+     */
     fun hkdf(chainingKey: ByteArray, inputKeyMaterial: ByteArray, numOutputs: Int): List<ByteArray> {
         val tempKey = hmacHash(chainingKey, inputKeyMaterial)
         val output1 = hmacHash(tempKey, byteArrayOf(0x01))
@@ -52,7 +156,19 @@ interface HashFunction {
     }
 }
 
+/**
+ * Curve25519 (X25519) Diffie-Hellman implementation backed by the JCA.
+ *
+ * Uses thread-local JCA instances ([KeyPairGenerator], [KeyAgreement]) for
+ * thread-safety without synchronization overhead.
+ *
+ * Key length: 32 bytes.
+ *
+ * @see DH
+ * @see X448DH
+ */
 object Curve25519DH : DH {
+    /** DH output and public key length: 32 bytes. */
     override val dhLen = 32
 
     // Cached JCA instances (KeyFactory is thread-safe; KPG/KA are per-thread)
@@ -111,6 +227,13 @@ object Curve25519DH : DH {
         return keyFactory.generatePublic(java.security.spec.X509EncodedKeySpec(x509))
     }
 
+    /**
+     * Derives the X25519 public key from a raw private key by performing scalar
+     * multiplication with the standard base point.
+     *
+     * @param privateKey The 32-byte raw private key.
+     * @return The corresponding 32-byte public key.
+     */
     fun generatePublicKey(privateKey: ByteArray): ByteArray {
         val privKey = buildX25519PrivateKey(privateKey)
         val ka = kaLocal.get()
@@ -121,7 +244,17 @@ object Curve25519DH : DH {
     }
 }
 
+/**
+ * X448 (Goldilocks) Diffie-Hellman implementation using a pure-Kotlin scalar
+ * multiplication ([X448] helper object).
+ *
+ * Key length: 56 bytes.
+ *
+ * @see DH
+ * @see Curve25519DH
+ */
 object X448DH : DH {
+    /** DH output and public key length: 56 bytes. */
     override val dhLen = 56
 
     override fun generateKeyPair(): KeyPair {
@@ -154,6 +287,17 @@ private fun nonceToBytes(nonce: Long): ByteArray {
     return bytes
 }
 
+/**
+ * ChaCha20-Poly1305 AEAD cipher implementation backed by the JCA.
+ *
+ * Nonce encoding follows the Noise specification: 4 zero bytes followed by
+ * 8 bytes of the 64-bit nonce in little-endian byte order (12 bytes total).
+ *
+ * Uses thread-local JCA [Cipher] instances for thread-safety.
+ *
+ * @see CipherFunction
+ * @see AESGCM
+ */
 object ChaChaPoly : CipherFunction {
     private val cipherLocal = ThreadLocal.withInitial { Cipher.getInstance("ChaCha20-Poly1305") }
 
@@ -172,6 +316,18 @@ object ChaChaPoly : CipherFunction {
     }
 }
 
+/**
+ * AES-256-GCM AEAD cipher implementation backed by the JCA.
+ *
+ * Nonce encoding follows the Noise specification: 4 zero bytes followed by
+ * 8 bytes of the 64-bit nonce in little-endian byte order (12 bytes total).
+ * Uses a 128-bit authentication tag.
+ *
+ * Uses thread-local JCA [Cipher] instances for thread-safety.
+ *
+ * @see CipherFunction
+ * @see ChaChaPoly
+ */
 object AESGCM : CipherFunction {
     private val cipherLocal = ThreadLocal.withInitial { Cipher.getInstance("AES/GCM/NoPadding") }
 
@@ -190,8 +346,21 @@ object AESGCM : CipherFunction {
     }
 }
 
+/**
+ * SHA-256 hash function implementation backed by the JCA.
+ *
+ * Provides an optimized [hmacHash] via the JCA `HmacSHA256` [javax.crypto.Mac],
+ * as well as incremental [hash] for two-part inputs.
+ *
+ * Hash length: 32 bytes. Block length: 64 bytes.
+ *
+ * @see HashFunction
+ * @see SHA512Hash
+ */
 object SHA256Hash : HashFunction {
+    /** Hash output length: 32 bytes. */
     override val hashLen = 32
+    /** Internal block length: 64 bytes. */
     override val blockLen = 64
     private val mdLocal = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-256") }
     private val macLocal = ThreadLocal.withInitial { javax.crypto.Mac.getInstance("HmacSHA256") }
@@ -216,8 +385,21 @@ object SHA256Hash : HashFunction {
     }
 }
 
+/**
+ * SHA-512 hash function implementation backed by the JCA.
+ *
+ * Provides an optimized [hmacHash] via the JCA `HmacSHA512` [javax.crypto.Mac],
+ * as well as incremental [hash] for two-part inputs.
+ *
+ * Hash length: 64 bytes. Block length: 128 bytes.
+ *
+ * @see HashFunction
+ * @see SHA256Hash
+ */
 object SHA512Hash : HashFunction {
+    /** Hash output length: 64 bytes. */
     override val hashLen = 64
+    /** Internal block length: 128 bytes. */
     override val blockLen = 128
     private val mdLocal = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-512") }
     private val macLocal = ThreadLocal.withInitial { javax.crypto.Mac.getInstance("HmacSHA512") }
@@ -242,8 +424,21 @@ object SHA512Hash : HashFunction {
     }
 }
 
+/**
+ * BLAKE2b hash function implemented in pure Kotlin.
+ *
+ * Implements the BLAKE2b algorithm (RFC 7693) with a fixed 64-byte output.
+ * Uses 12 rounds of the G mixing function on 64-bit words.
+ *
+ * Hash length: 64 bytes. Block length: 128 bytes.
+ *
+ * @see HashFunction
+ * @see Blake2sHash
+ */
 object Blake2bHash : HashFunction {
+    /** Hash output length: 64 bytes. */
     override val hashLen = 64
+    /** Internal block length: 128 bytes. */
     override val blockLen = 128
 
     private val IV = ulongArrayOf(
@@ -339,8 +534,21 @@ object Blake2bHash : HashFunction {
     }
 }
 
+/**
+ * BLAKE2s hash function implemented in pure Kotlin.
+ *
+ * Implements the BLAKE2s algorithm (RFC 7693) with a fixed 32-byte output.
+ * Uses 10 rounds of the G mixing function on 32-bit words.
+ *
+ * Hash length: 32 bytes. Block length: 64 bytes.
+ *
+ * @see HashFunction
+ * @see Blake2bHash
+ */
 object Blake2sHash : HashFunction {
+    /** Hash output length: 32 bytes. */
     override val hashLen = 32
+    /** Internal block length: 64 bytes. */
     override val blockLen = 64
 
     private val IV = uintArrayOf(

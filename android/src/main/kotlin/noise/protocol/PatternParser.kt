@@ -1,5 +1,25 @@
 package noise.protocol
 
+/**
+ * Describes a fully-parsed Noise Protocol handshake including the pattern name,
+ * cryptographic algorithm choices, pre-message tokens, and the ordered message
+ * patterns that define the handshake flow.
+ *
+ * Instances are produced by [PatternParser.parse] and consumed by [HandshakeState].
+ *
+ * @property pattern The base handshake pattern name (e.g. `"XX"`, `"IK"`, `"N"`).
+ * @property dhFunction The Diffie-Hellman function identifier (e.g. `"25519"`, `"448"`).
+ * @property cipherFunction The AEAD cipher identifier (e.g. `"ChaChaPoly"`, `"AESGCM"`).
+ * @property hashFunction The hash function identifier (e.g. `"SHA256"`, `"BLAKE2b"`).
+ * @property initiatorPreMessages Tokens that the initiator has pre-shared (e.g. `["s"]`).
+ * @property responderPreMessages Tokens that the responder has pre-shared (e.g. `["s"]`).
+ * @property messagePatterns Ordered list of message patterns; each entry is a list of tokens
+ *   (e.g. `["e", "es", "ss"]`) that define one handshake message.
+ * @property pskPositions Positions at which PSK tokens are inserted (modern `pskN` modifier).
+ * @property isNoisePSK `true` when using the legacy `NoisePSK_` prefix convention.
+ * @see PatternParser
+ * @see HandshakeState
+ */
 data class HandshakeDescriptor(
     val pattern: String,
     val dhFunction: String,
@@ -12,16 +32,80 @@ data class HandshakeDescriptor(
     val isNoisePSK: Boolean = false
 )
 
+/**
+ * Base exception type for all errors originating from the Noise Protocol library.
+ *
+ * This is a sealed class, so callers can exhaustively `when`-match over the
+ * specific exception subtypes.
+ *
+ * @param message Human-readable description of the error.
+ * @see NoiseSession
+ */
 sealed class NoiseException(message: String) : Exception(message) {
+    /**
+     * The protocol name string could not be parsed, or references an
+     * unsupported pattern, DH function, cipher, or hash.
+     *
+     * @param pattern Description of what was invalid.
+     */
     class InvalidPattern(pattern: String) : NoiseException("Invalid pattern: $pattern")
+
+    /**
+     * A required key (static, ephemeral, or PSK) was missing or malformed.
+     *
+     * @param message Details about the missing or invalid key.
+     */
     class InvalidKey(message: String) : NoiseException(message)
+
+    /**
+     * An operation was attempted in an invalid protocol state
+     * (e.g. sending data after the handshake completed without calling [NoiseSession.split]).
+     *
+     * @param message Details about the invalid state transition.
+     */
     class InvalidState(message: String) : NoiseException(message)
+
+    /**
+     * A [HandshakeState.split] was called before the handshake finished.
+     */
     class HandshakeIncomplete : NoiseException("Handshake not complete")
+
+    /**
+     * An AEAD decryption operation failed (authentication tag mismatch).
+     *
+     * When this exception is thrown the [CipherState] is permanently invalidated
+     * to prevent further use of a potentially compromised session.
+     */
     class DecryptionFailed : NoiseException("Decryption failed")
+
+    /**
+     * The nonce counter reached its maximum value ([Long.MAX_VALUE])
+     * and no more messages can be encrypted or decrypted with this [CipherState].
+     */
     class NonceExhausted : NoiseException("Nonce exhausted")
+
+    /**
+     * The [CipherState] was permanently invalidated (typically after a
+     * [DecryptionFailed] error) and can no longer be used.
+     */
     class SessionInvalidated : NoiseException("Session invalidated")
 }
 
+/**
+ * Parses Noise Protocol name strings into [HandshakeDescriptor] instances.
+ *
+ * Supports all standard interactive patterns (NN, NK, NX, KN, KK, KX, XN, XK, XX,
+ * IN, IK, IX), one-way patterns (N, K, X), and deferred variants (NK1, X1K, etc.).
+ * Also handles the `fallback` modifier and both legacy `NoisePSK_` and modern
+ * `pskN` pre-shared key conventions.
+ *
+ * Parsed descriptors are cached internally for performance.
+ *
+ * Example protocol name: `"Noise_XX_25519_ChaChaPoly_SHA256"`
+ *
+ * @see HandshakeDescriptor
+ * @see NoiseSession
+ */
 object PatternParser {
     private val parseCache = java.util.concurrent.ConcurrentHashMap<String, HandshakeDescriptor>()
 
@@ -193,6 +277,22 @@ object PatternParser {
         ),
     )
 
+    /**
+     * Parses a full Noise Protocol name into a [HandshakeDescriptor].
+     *
+     * The protocol name must follow the format:
+     * `Noise_<pattern>[modifiers]_<DH>_<cipher>_<hash>`
+     * or the legacy PSK format:
+     * `NoisePSK_<pattern>_<DH>_<cipher>_<hash>`
+     *
+     * Results are cached so repeated calls with the same name are cheap.
+     * Each call returns a defensive copy of the cached descriptor.
+     *
+     * @param protocolName The full protocol name string (e.g. `"Noise_XX_25519_ChaChaPoly_SHA256"`).
+     * @return The parsed [HandshakeDescriptor].
+     * @throws NoiseException.InvalidPattern If the protocol name is malformed or references
+     *   unsupported algorithms.
+     */
     fun parse(protocolName: String): HandshakeDescriptor {
         parseCache[protocolName]?.let { return it.copy() }
 

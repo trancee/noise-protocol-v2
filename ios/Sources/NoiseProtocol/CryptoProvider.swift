@@ -2,25 +2,91 @@ import Foundation
 import CryptoKit
 import Security
 
+/// A protocol for Diffie-Hellman key agreement functions used by the Noise Protocol.
+///
+/// Conforming types provide key generation and shared secret computation for a specific
+/// elliptic curve (e.g., Curve25519 or X448).
 public protocol DH: Sendable {
+    /// The length in bytes of a public key and DH output for this function.
     var dhLen: Int { get }
+
+    /// Generates a new random key pair.
+    ///
+    /// - Returns: A ``KeyPair`` containing the generated private and public keys.
     func generateKeyPair() -> KeyPair
+
+    /// Performs a Diffie-Hellman key agreement operation.
+    ///
+    /// - Parameters:
+    ///   - keyPair: The local key pair (private key is used).
+    ///   - publicKey: The remote party's public key.
+    /// - Returns: The shared secret as raw bytes.
+    /// - Throws: An error if the keys are invalid.
     func dh(keyPair: KeyPair, publicKey: Data) throws -> Data
 }
 
+/// A protocol for AEAD cipher functions used by the Noise Protocol.
+///
+/// Conforming types provide authenticated encryption with associated data (AEAD)
+/// using a 32-byte key and 8-byte nonce (formatted as 12 bytes per the Noise spec).
 public protocol CipherFunction: Sendable {
+    /// Encrypts plaintext with an AEAD cipher.
+    ///
+    /// - Parameters:
+    ///   - key: The 32-byte encryption key.
+    ///   - nonce: The 64-bit nonce value.
+    ///   - ad: Associated data to authenticate but not encrypt.
+    ///   - plaintext: The data to encrypt.
+    /// - Returns: The ciphertext with appended 16-byte authentication tag.
+    /// - Throws: An error if encryption fails.
     func encrypt(key: Data, nonce: UInt64, ad: Data, plaintext: Data) throws -> Data
+
+    /// Decrypts ciphertext with an AEAD cipher.
+    ///
+    /// - Parameters:
+    ///   - key: The 32-byte encryption key.
+    ///   - nonce: The 64-bit nonce value.
+    ///   - ad: Associated data that was authenticated during encryption.
+    ///   - ciphertext: The ciphertext with appended 16-byte authentication tag.
+    /// - Returns: The decrypted plaintext.
+    /// - Throws: An error if decryption or authentication fails.
     func decrypt(key: Data, nonce: UInt64, ad: Data, ciphertext: Data) throws -> Data
 }
 
+/// A protocol for hash functions used by the Noise Protocol.
+///
+/// Conforming types provide cryptographic hashing and HMAC operations.
+/// The Noise spec requires `HASH`, `HMAC-HASH`, and `HKDF` operations; the
+/// `hmacHash` and `hkdf` methods have default implementations via the protocol extension.
 public protocol HashFunction: Sendable {
+    /// The output length of the hash function in bytes (e.g., 32 for SHA-256, 64 for SHA-512).
     var hashLen: Int { get }
+
+    /// The internal block length of the hash function in bytes (e.g., 64 for SHA-256, 128 for SHA-512).
     var blockLen: Int { get }
+
+    /// Computes the cryptographic hash of the given data.
+    ///
+    /// - Parameter data: The input data to hash.
+    /// - Returns: The hash digest.
     func hash(_ data: Data) -> Data
+
+    /// Computes HMAC using this hash function.
+    ///
+    /// - Parameters:
+    ///   - key: The HMAC key.
+    ///   - data: The data to authenticate.
+    /// - Returns: The HMAC authentication code.
     func hmacHash(key: Data, data: Data) -> Data
 }
 
 extension HashFunction {
+    /// Default HMAC implementation using the hash function per RFC 2104.
+    ///
+    /// - Parameters:
+    ///   - key: The HMAC key. If longer than `blockLen`, it is first hashed.
+    ///   - data: The data to authenticate.
+    /// - Returns: The HMAC authentication code.
     public func hmacHash(key: Data, data: Data) -> Data {
         let paddedKey = key.count > blockLen ? hash(key) : key
         var ipad = Data(count: blockLen)
@@ -33,6 +99,13 @@ extension HashFunction {
         return hash(opad + hash(ipad + data))
     }
 
+    /// Derives keys using HKDF as specified by the Noise Protocol.
+    ///
+    /// - Parameters:
+    ///   - chainingKey: The current chaining key.
+    ///   - inputKeyMaterial: The input key material (e.g., a DH shared secret).
+    ///   - numOutputs: The number of output keys to derive (2 or 3).
+    /// - Returns: An array of derived key data.
     public func hkdf(chainingKey: Data, inputKeyMaterial: Data, numOutputs: Int) -> [Data] {
         let tempKey = hmacHash(key: chainingKey, data: inputKeyMaterial)
         let output1 = hmacHash(key: tempKey, data: Data([0x01]))
@@ -57,11 +130,20 @@ private func nonceToBytes(_ nonce: UInt64) -> Data {
     return bytes
 }
 
+/// Curve25519 Diffie-Hellman key agreement using Apple CryptoKit.
+///
+/// Implements the `25519` DH function from the Noise Protocol specification.
+/// Public keys and shared secrets are 32 bytes.
 public struct Curve25519DH: DH {
+    /// The DH output length: 32 bytes.
     public let dhLen = 32
 
+    /// Creates a new Curve25519 DH function instance.
     public init() {}
 
+    /// Generates a new random Curve25519 key pair.
+    ///
+    /// - Returns: A ``KeyPair`` with 32-byte private and public keys.
     public func generateKeyPair() -> KeyPair {
         let privateKey = Curve25519.KeyAgreement.PrivateKey()
         return KeyPair(
@@ -70,11 +152,22 @@ public struct Curve25519DH: DH {
         )
     }
 
+    /// Derives the public key from a raw private key.
+    ///
+    /// - Parameter privateKey: The 32-byte raw private key.
+    /// - Returns: The corresponding 32-byte public key.
     public func generatePublicKey(privateKey: Data) -> Data {
         let signingKey = try! Curve25519.KeyAgreement.PrivateKey(rawRepresentation: privateKey)
         return Data(signingKey.publicKey.rawRepresentation)
     }
 
+    /// Performs a Curve25519 Diffie-Hellman key agreement.
+    ///
+    /// - Parameters:
+    ///   - keyPair: The local key pair.
+    ///   - publicKey: The remote party's 32-byte public key.
+    /// - Returns: The 32-byte shared secret.
+    /// - Throws: An error if either key is invalid.
     public func dh(keyPair: KeyPair, publicKey: Data) throws -> Data {
         let privateKey = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: keyPair.privateKey)
         let pubKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: publicKey)
@@ -83,11 +176,24 @@ public struct Curve25519DH: DH {
     }
 }
 
+/// X448 Diffie-Hellman key agreement using a pure-Swift implementation.
+///
+/// Implements the `448` DH function from the Noise Protocol specification (RFC 7748).
+/// Public keys and shared secrets are 56 bytes.
+///
+/// > Note: The trailing underscore in `X448DH_` avoids a name collision with
+/// > potential platform types. This is a convention used throughout this library
+/// > for types that shadow CryptoKit or system names.
 public struct X448DH_: DH {
+    /// The DH output length: 56 bytes.
     public let dhLen = 56
 
+    /// Creates a new X448 DH function instance.
     public init() {}
 
+    /// Generates a new random X448 key pair.
+    ///
+    /// - Returns: A ``KeyPair`` with 56-byte private and public keys.
     public func generateKeyPair() -> KeyPair {
         var privateKey = Data(count: 56)
         _ = privateKey.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 56, $0.baseAddress!) }
@@ -97,14 +203,37 @@ public struct X448DH_: DH {
         return KeyPair(privateKey: privateKey, publicKey: publicKey)
     }
 
+    /// Performs an X448 Diffie-Hellman key agreement.
+    ///
+    /// - Parameters:
+    ///   - keyPair: The local key pair.
+    ///   - publicKey: The remote party's 56-byte public key.
+    /// - Returns: The 56-byte shared secret.
+    /// - Throws: An error if the keys are invalid.
     public func dh(keyPair: KeyPair, publicKey: Data) throws -> Data {
         return X448_.scalarMult(k: keyPair.privateKey, u: publicKey)
     }
 }
 
+/// ChaCha20-Poly1305 AEAD cipher using Apple CryptoKit.
+///
+/// Implements the `ChaChaPoly` cipher function from the Noise Protocol specification.
+///
+/// > Note: The trailing underscore in `ChaChaPoly_` avoids a name collision with
+/// > `CryptoKit.ChaChaPoly`.
 public struct ChaChaPoly_: CipherFunction {
+    /// Creates a new ChaChaPoly cipher instance.
     public init() {}
 
+    /// Encrypts plaintext using ChaCha20-Poly1305.
+    ///
+    /// - Parameters:
+    ///   - key: The 32-byte encryption key.
+    ///   - nonce: The 64-bit nonce (padded to 12 bytes per Noise spec: 4 zero bytes + 8 LE bytes).
+    ///   - ad: Associated data to authenticate.
+    ///   - plaintext: The data to encrypt.
+    /// - Returns: Ciphertext concatenated with the 16-byte Poly1305 tag.
+    /// - Throws: A CryptoKit error if encryption fails.
     public func encrypt(key: Data, nonce: UInt64, ad: Data, plaintext: Data) throws -> Data {
         let symmetricKey = SymmetricKey(data: key)
         let cryptoNonce = try ChaChaPoly.Nonce(data: nonceToBytes(nonce))
@@ -112,6 +241,15 @@ public struct ChaChaPoly_: CipherFunction {
         return sealed.ciphertext + sealed.tag
     }
 
+    /// Decrypts ciphertext using ChaCha20-Poly1305.
+    ///
+    /// - Parameters:
+    ///   - key: The 32-byte encryption key.
+    ///   - nonce: The 64-bit nonce used during encryption.
+    ///   - ad: The associated data used during encryption.
+    ///   - ciphertext: The ciphertext with appended 16-byte Poly1305 tag.
+    /// - Returns: The decrypted plaintext.
+    /// - Throws: A CryptoKit error if decryption or authentication fails.
     public func decrypt(key: Data, nonce: UInt64, ad: Data, ciphertext: Data) throws -> Data {
         let symmetricKey = SymmetricKey(data: key)
         let cryptoNonce = try ChaChaPoly.Nonce(data: nonceToBytes(nonce))
@@ -123,9 +261,25 @@ public struct ChaChaPoly_: CipherFunction {
     }
 }
 
+/// AES-256-GCM AEAD cipher using Apple CryptoKit.
+///
+/// Implements the `AESGCM` cipher function from the Noise Protocol specification.
+///
+/// > Note: The trailing underscore in `AESGCM_` avoids a name collision with
+/// > `CryptoKit.AES.GCM`.
 public struct AESGCM_: CipherFunction {
+    /// Creates a new AES-GCM cipher instance.
     public init() {}
 
+    /// Encrypts plaintext using AES-256-GCM.
+    ///
+    /// - Parameters:
+    ///   - key: The 32-byte encryption key.
+    ///   - nonce: The 64-bit nonce (padded to 12 bytes per Noise spec).
+    ///   - ad: Associated data to authenticate.
+    ///   - plaintext: The data to encrypt.
+    /// - Returns: Ciphertext concatenated with the 16-byte GCM tag.
+    /// - Throws: A CryptoKit error if encryption fails.
     public func encrypt(key: Data, nonce: UInt64, ad: Data, plaintext: Data) throws -> Data {
         let symmetricKey = SymmetricKey(data: key)
         let cryptoNonce = try AES.GCM.Nonce(data: nonceToBytes(nonce))
@@ -133,6 +287,15 @@ public struct AESGCM_: CipherFunction {
         return sealed.ciphertext + sealed.tag
     }
 
+    /// Decrypts ciphertext using AES-256-GCM.
+    ///
+    /// - Parameters:
+    ///   - key: The 32-byte encryption key.
+    ///   - nonce: The 64-bit nonce used during encryption.
+    ///   - ad: The associated data used during encryption.
+    ///   - ciphertext: The ciphertext with appended 16-byte GCM tag.
+    /// - Returns: The decrypted plaintext.
+    /// - Throws: A CryptoKit error if decryption or authentication fails.
     public func decrypt(key: Data, nonce: UInt64, ad: Data, ciphertext: Data) throws -> Data {
         let symmetricKey = SymmetricKey(data: key)
         let cryptoNonce = try AES.GCM.Nonce(data: nonceToBytes(nonce))
@@ -144,16 +307,36 @@ public struct AESGCM_: CipherFunction {
     }
 }
 
+/// SHA-256 hash function using Apple CryptoKit.
+///
+/// Implements the `SHA256` hash function from the Noise Protocol specification.
+/// Produces 32-byte digests with a 64-byte block size.
+///
+/// > Note: The trailing underscore in `SHA256Hash_` avoids a name collision with
+/// > `CryptoKit.SHA256`.
 public struct SHA256Hash_: HashFunction {
+    /// The hash output length: 32 bytes.
     public let hashLen = 32
+    /// The internal block length: 64 bytes.
     public let blockLen = 64
 
+    /// Creates a new SHA-256 hash function instance.
     public init() {}
 
+    /// Computes the SHA-256 hash of the given data.
+    ///
+    /// - Parameter data: The input data to hash.
+    /// - Returns: A 32-byte hash digest.
     public func hash(_ data: Data) -> Data {
         Data(SHA256.hash(data: data))
     }
 
+    /// Computes HMAC-SHA256 using Apple CryptoKit for optimal performance.
+    ///
+    /// - Parameters:
+    ///   - key: The HMAC key.
+    ///   - data: The data to authenticate.
+    /// - Returns: A 32-byte authentication code.
     public func hmacHash(key: Data, data: Data) -> Data {
         let symmetricKey = SymmetricKey(data: key)
         let mac = HMAC<SHA256>.authenticationCode(for: data, using: symmetricKey)
@@ -161,16 +344,36 @@ public struct SHA256Hash_: HashFunction {
     }
 }
 
+/// SHA-512 hash function using Apple CryptoKit.
+///
+/// Implements the `SHA512` hash function from the Noise Protocol specification.
+/// Produces 64-byte digests with a 128-byte block size.
+///
+/// > Note: The trailing underscore in `SHA512Hash_` avoids a name collision with
+/// > `CryptoKit.SHA512`.
 public struct SHA512Hash_: HashFunction {
+    /// The hash output length: 64 bytes.
     public let hashLen = 64
+    /// The internal block length: 128 bytes.
     public let blockLen = 128
 
+    /// Creates a new SHA-512 hash function instance.
     public init() {}
 
+    /// Computes the SHA-512 hash of the given data.
+    ///
+    /// - Parameter data: The input data to hash.
+    /// - Returns: A 64-byte hash digest.
     public func hash(_ data: Data) -> Data {
         Data(SHA512.hash(data: data))
     }
 
+    /// Computes HMAC-SHA512 using Apple CryptoKit for optimal performance.
+    ///
+    /// - Parameters:
+    ///   - key: The HMAC key.
+    ///   - data: The data to authenticate.
+    /// - Returns: A 64-byte authentication code.
     public func hmacHash(key: Data, data: Data) -> Data {
         let symmetricKey = SymmetricKey(data: key)
         let mac = HMAC<SHA512>.authenticationCode(for: data, using: symmetricKey)
@@ -178,10 +381,21 @@ public struct SHA512Hash_: HashFunction {
     }
 }
 
+/// BLAKE2b hash function with a pure-Swift implementation.
+///
+/// Implements the `BLAKE2b` hash function from the Noise Protocol specification (RFC 7693).
+/// Produces 64-byte digests with a 128-byte block size. Uses 12 rounds of the BLAKE2b
+/// compression function with the standard IV and sigma permutation tables.
+///
+/// > Note: The trailing underscore in `Blake2bHash_` avoids potential name collisions
+/// > with third-party BLAKE2 implementations.
 public struct Blake2bHash_: HashFunction {
+    /// The hash output length: 64 bytes.
     public let hashLen = 64
+    /// The internal block length: 128 bytes.
     public let blockLen = 128
 
+    /// Creates a new BLAKE2b hash function instance.
     public init() {}
 
     private static let iv: [UInt64] = [
@@ -206,6 +420,10 @@ public struct Blake2bHash_: HashFunction {
         [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3]
     ]
 
+    /// Computes the BLAKE2b hash of the given data.
+    ///
+    /// - Parameter data: The input data to hash.
+    /// - Returns: A 64-byte hash digest.
     public func hash(_ data: Data) -> Data {
         var h = Self.iv
         h[0] ^= 0x01010000 ^ 64 // parameter block: depth=1, fanout=1, nn=64
@@ -275,10 +493,21 @@ public struct Blake2bHash_: HashFunction {
     }
 }
 
+/// BLAKE2s hash function with a pure-Swift implementation.
+///
+/// Implements the `BLAKE2s` hash function from the Noise Protocol specification (RFC 7693).
+/// Produces 32-byte digests with a 64-byte block size. Uses 10 rounds of the BLAKE2s
+/// compression function with 32-bit words.
+///
+/// > Note: The trailing underscore in `Blake2sHash_` avoids potential name collisions
+/// > with third-party BLAKE2 implementations.
 public struct Blake2sHash_: HashFunction {
+    /// The hash output length: 32 bytes.
     public let hashLen = 32
+    /// The internal block length: 64 bytes.
     public let blockLen = 64
 
+    /// Creates a new BLAKE2s hash function instance.
     public init() {}
 
     private static let iv: [UInt32] = [
@@ -299,6 +528,10 @@ public struct Blake2sHash_: HashFunction {
         [10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0]
     ]
 
+    /// Computes the BLAKE2s hash of the given data.
+    ///
+    /// - Parameter data: The input data to hash.
+    /// - Returns: A 32-byte hash digest.
     public func hash(_ data: Data) -> Data {
         var h = Self.iv
         h[0] ^= 0x01010000 ^ 32

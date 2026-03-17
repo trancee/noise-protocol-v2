@@ -1,16 +1,42 @@
 import Foundation
 
+/// Describes a parsed Noise Protocol handshake, including the pattern, cryptographic
+/// algorithm choices, pre-message tokens, and message patterns.
+///
+/// This struct is produced by ``PatternParser/parse(_:)`` and consumed by
+/// ``HandshakeState`` to drive the handshake.
 public struct HandshakeDescriptor: Sendable {
+    /// The base pattern name (e.g., `"XX"`, `"IK"`, `"N"`).
     public let pattern: String
+    /// The DH function name (e.g., `"25519"`, `"448"`).
     public let dhFunction: String
+    /// The cipher function name (e.g., `"ChaChaPoly"`, `"AESGCM"`).
     public let cipherFunction: String
+    /// The hash function name (e.g., `"SHA256"`, `"BLAKE2b"`).
     public let hashFunction: String
+    /// Tokens for the initiator's pre-message (e.g., `["s"]` for patterns where the initiator's static key is known).
     public let initiatorPreMessages: [String]
+    /// Tokens for the responder's pre-message (e.g., `["s"]` for patterns where the responder's static key is known).
     public let responderPreMessages: [String]
+    /// The ordered list of message patterns, each containing a list of tokens (e.g., `["e", "es", "ss"]`).
     public let messagePatterns: [[String]]
+    /// Whether this descriptor uses the legacy `NoisePSK_` prefix convention.
     public let isNoisePSK: Bool
+    /// The PSK modifier positions (e.g., `[0, 2]` for `psk0+psk2`).
     public let pskPositions: [Int]
 
+    /// Creates a new handshake descriptor with the given configuration.
+    ///
+    /// - Parameters:
+    ///   - pattern: The base pattern name.
+    ///   - dhFunction: The DH function name.
+    ///   - cipherFunction: The cipher function name.
+    ///   - hashFunction: The hash function name.
+    ///   - initiatorPreMessages: Tokens for the initiator's pre-message.
+    ///   - responderPreMessages: Tokens for the responder's pre-message.
+    ///   - messagePatterns: The ordered message patterns with their tokens.
+    ///   - isNoisePSK: Whether the legacy `NoisePSK_` prefix is used (default: `false`).
+    ///   - pskPositions: PSK modifier positions (default: empty).
     public init(pattern: String, dhFunction: String, cipherFunction: String, hashFunction: String,
                 initiatorPreMessages: [String], responderPreMessages: [String],
                 messagePatterns: [[String]], isNoisePSK: Bool = false, pskPositions: [Int] = []) {
@@ -26,6 +52,18 @@ public struct HandshakeDescriptor: Sendable {
     }
 }
 
+/// Parses Noise Protocol name strings into ``HandshakeDescriptor`` values.
+///
+/// Supports the full Noise protocol naming convention:
+/// `Noise_<pattern>[modifiers]_<DH>_<cipher>_<hash>`
+///
+/// This includes:
+/// - **Fundamental patterns**: NN, NK, NX, KN, KK, KX, XN, XK, XX, IN, IK, IX
+/// - **One-way patterns**: N, K, X
+/// - **Deferred patterns**: NK1, NX1, X1N, X1K, XK1, X1K1, etc.
+/// - **PSK modifiers**: `psk0`, `psk1`, `psk2`, etc.
+/// - **Fallback modifier**: e.g., `XXfallback`
+/// - **Legacy `NoisePSK_` prefix**: e.g., `NoisePSK_XX_25519_ChaChaPoly_SHA256`
 public enum PatternParser {
 
     private static let validDH: Set<String> = ["25519", "448"]
@@ -120,6 +158,15 @@ public enum PatternParser {
                            messagePatterns: [["e", "s"], ["e", "ee", "s"], ["se", "es"]]),
     ]
 
+    /// Parses a full Noise protocol name string into a ``HandshakeDescriptor``.
+    ///
+    /// The protocol name must follow the format:
+    /// `Noise_<pattern>[modifiers]_<DH>_<cipher>_<hash>` or
+    /// `NoisePSK_<pattern>_<DH>_<cipher>_<hash>`.
+    ///
+    /// - Parameter protocolName: The full Noise protocol name (e.g., `"Noise_XX_25519_ChaChaPoly_SHA256"`).
+    /// - Returns: A ``HandshakeDescriptor`` containing all parsed pattern information.
+    /// - Throws: ``NoiseError/invalidPattern(_:)`` if the name is malformed or references unsupported algorithms.
     public static func parse(_ protocolName: String) throws -> HandshakeDescriptor {
         let parts = protocolName.split(separator: "_").map(String.init)
 

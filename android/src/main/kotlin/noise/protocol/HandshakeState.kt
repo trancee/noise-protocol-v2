@@ -1,5 +1,32 @@
 package noise.protocol
 
+/**
+ * Implements the Noise Protocol Framework HandshakeState (Section 5.3).
+ *
+ * Orchestrates a multi-message handshake by processing tokens (e, s, ee, es, se, ss, psk)
+ * according to the chosen handshake pattern. Each call to [writeMessage] or [readMessage]
+ * processes one message pattern from the [HandshakeDescriptor]. When all messages have been
+ * exchanged, [isHandshakeComplete] becomes `true` and [split] can be called to obtain
+ * the transport cipher states.
+ *
+ * Ephemeral private key material is securely zeroed when the handshake completes.
+ *
+ * @param protocolName The full Noise protocol name used to initialize the [SymmetricState].
+ * @param role Whether this party is the [Role.INITIATOR] or [Role.RESPONDER].
+ * @param dh The Diffie-Hellman function to use.
+ * @param cipher The AEAD cipher function.
+ * @param hash The hash function.
+ * @param descriptor The parsed handshake pattern descriptor.
+ * @param staticKeyPair The local static key pair, if required by the pattern.
+ * @param remoteStaticKey The remote party's static public key, if known in advance.
+ * @param prologue Application-specific prologue data to mix into the handshake hash.
+ * @param localEphemeral A fixed local ephemeral key pair (for testing or pre-message patterns).
+ * @param remoteEphemeral The remote party's ephemeral public key (for pre-message patterns).
+ * @param psks Pre-shared keys, consumed in order by `psk` tokens.
+ * @throws NoiseException.InvalidKey If a required key is missing for the chosen pattern.
+ * @see NoiseSession
+ * @see SymmetricState
+ */
 class HandshakeState(
     protocolName: String,
     private val role: Role,
@@ -21,6 +48,7 @@ class HandshakeState(
     private var re: ByteArray? = null
     private var messageIndex = 0
     private val messagePatterns: List<List<String>> = descriptor.messagePatterns
+    /** `true` once all handshake message patterns have been processed. */
     var isHandshakeComplete = false
         private set
     private var cipherStatePair: Pair<CipherState, CipherState>? = null
@@ -87,6 +115,17 @@ class HandshakeState(
         }
     }
 
+    /**
+     * Processes the next outgoing handshake message pattern and appends
+     * an optional [payload].
+     *
+     * Generates an ephemeral key pair (for `e` tokens), encrypts the local static
+     * public key (for `s` tokens), performs DH operations, and encrypts the payload.
+     *
+     * @param payload Optional application data to include in this handshake message.
+     * @return The serialized handshake message bytes to send to the remote party.
+     * @throws NoiseException.InvalidKey If a required PSK is missing.
+     */
     fun writeMessage(payload: ByteArray = byteArrayOf()): ByteArray {
         val pattern = messagePatterns[messageIndex]
         var buffer = ByteArray(0)
@@ -116,6 +155,18 @@ class HandshakeState(
         return buffer
     }
 
+    /**
+     * Processes the next incoming handshake [message] and extracts the payload.
+     *
+     * Reads the remote ephemeral public key (for `e` tokens), decrypts the remote
+     * static public key (for `s` tokens), performs DH operations, and decrypts the
+     * payload.
+     *
+     * @param message The raw handshake message bytes received from the remote party.
+     * @return The decrypted payload contained in this handshake message.
+     * @throws NoiseException.InvalidKey If a required PSK is missing.
+     * @throws NoiseException.DecryptionFailed If any decryption step fails.
+     */
     fun readMessage(message: ByteArray): ByteArray {
         val pattern = messagePatterns[messageIndex]
         var offset = 0
@@ -147,10 +198,30 @@ class HandshakeState(
         return payload
     }
 
+    /**
+     * Returns the raw private key bytes of the local ephemeral key pair, or `null`
+     * if no ephemeral key has been generated yet.
+     *
+     * @return The ephemeral private key bytes, or `null`.
+     */
     fun getLocalEphemeralPrivateKey(): ByteArray? = e?.privateKey
 
+    /**
+     * Returns a copy of the current chaining key from the underlying [SymmetricState].
+     *
+     * @return The current chaining key bytes.
+     */
     fun getChainingKey(): ByteArray = symmetricState.getChainingKey()
 
+    /**
+     * Returns the pair of [CipherState] instances derived at handshake completion.
+     *
+     * The first element is the initiator-to-responder cipher state; the second is
+     * the responder-to-initiator cipher state.
+     *
+     * @return The transport cipher state pair.
+     * @throws NoiseException.HandshakeIncomplete If the handshake has not finished yet.
+     */
     fun split(): Pair<CipherState, CipherState> {
         if (!isHandshakeComplete) throw NoiseException.HandshakeIncomplete()
         return cipherStatePair!!
