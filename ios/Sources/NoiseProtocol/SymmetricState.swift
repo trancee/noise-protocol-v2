@@ -56,6 +56,21 @@ class SymmetricState {
         return (c1, c2)
     }
 
+    func mixKeyAndHash(_ inputKeyMaterial: Data) {
+        let outputs = hashFn.hkdf(chainingKey: ck, inputKeyMaterial: inputKeyMaterial, numOutputs: 3)
+        ck = outputs[0]
+        mixHash(outputs[1])
+        let truncatedK = outputs[2].count > 32 ? Data(outputs[2].prefix(32)) : outputs[2]
+        cipherState.setKey(truncatedK)
+    }
+
+    // Old NoisePSK_ convention: 2-output HKDF, updates ck + MixHash, no cipher key
+    func mixPsk(_ psk: Data) {
+        let outputs = hashFn.hkdf(chainingKey: ck, inputKeyMaterial: psk, numOutputs: 2)
+        ck = outputs[0]
+        mixHash(outputs[1])
+    }
+
     private func truncateKey(_ key: Data) -> Data {
         key.count > 32 ? Data(key.prefix(32)) : key
     }

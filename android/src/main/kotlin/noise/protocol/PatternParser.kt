@@ -7,7 +7,9 @@ data class HandshakeDescriptor(
     val hashFunction: String,
     val initiatorPreMessages: List<String>,
     val responderPreMessages: List<String>,
-    val messagePatterns: List<List<String>>
+    val messagePatterns: List<List<String>>,
+    val pskPositions: List<Int> = emptyList(),
+    val isNoisePSK: Boolean = false
 )
 
 sealed class NoiseException(message: String) : Exception(message) {
@@ -99,11 +101,16 @@ object PatternParser {
 
     fun parse(protocolName: String): HandshakeDescriptor {
         val parts = protocolName.split("_")
-        if (parts.size != 5 || parts[0] != "Noise") {
+
+        // Handle NoisePSK_ prefix format
+        val isNoisePSK = parts.size == 5 && parts[0] == "NoisePSK"
+        val isNoise = parts.size == 5 && parts[0] == "Noise"
+
+        if (!isNoise && !isNoisePSK) {
             throw NoiseException.InvalidPattern(protocolName)
         }
 
-        val patternName = parts[1]
+        val patternField = parts[1]
         val dh = parts[2]
         val cipher = parts[3]
         val hash = parts[4]
@@ -112,8 +119,24 @@ object PatternParser {
         if (cipher !in VALID_CIPHER) throw NoiseException.InvalidPattern("Unknown cipher: $cipher")
         if (hash !in VALID_HASH) throw NoiseException.InvalidPattern("Unknown hash: $hash")
 
+        // Extract base pattern and psk positions
+        val (patternName, pskPositions) = if (isNoisePSK) {
+            patternField to emptyList<Int>()
+        } else {
+            extractPskModifiers(patternField)
+        }
+
         val patternDef = PATTERNS[patternName]
             ?: throw NoiseException.InvalidPattern("Unknown pattern: $patternName")
+
+        // NoisePSK_ uses a different mechanism: PSK mixed before pre-messages,
+        // MixKey(e.pub) after each 'e' token. No psk tokens in message patterns.
+        // Modern pskN modifiers insert explicit 'psk' tokens into message patterns.
+        val modifiedPatterns = if (isNoisePSK) {
+            patternDef.messagePatterns // unmodified — no psk tokens
+        } else {
+            insertPskTokens(patternDef.messagePatterns, pskPositions)
+        }
 
         return HandshakeDescriptor(
             pattern = patternName,
@@ -122,7 +145,34 @@ object PatternParser {
             hashFunction = hash,
             initiatorPreMessages = patternDef.initiatorPreMessages,
             responderPreMessages = patternDef.responderPreMessages,
-            messagePatterns = patternDef.messagePatterns
+            messagePatterns = modifiedPatterns,
+            pskPositions = pskPositions,
+            isNoisePSK = isNoisePSK
         )
+    }
+
+    private fun extractPskModifiers(patternField: String): Pair<String, List<Int>> {
+        val pskRegex = Regex("psk(\\d+)")
+        val matches = pskRegex.findAll(patternField)
+        val positions = matches.map { it.groupValues[1].toInt() }.toList()
+        val baseName = patternField.replace(Regex("(psk\\d+\\+?)+"), "")
+        return baseName to positions
+    }
+
+    private fun insertPskTokens(patterns: List<List<String>>, pskPositions: List<Int>): List<List<String>> {
+        if (pskPositions.isEmpty()) return patterns
+        val result = patterns.map { it.toMutableList() }
+        for (pos in pskPositions) {
+            if (pos == 0) {
+                result[0].add(0, "psk") // beginning of first message
+            } else {
+                // pskN (N>0) = end of Nth message (1-indexed)
+                val msgIdx = pos - 1
+                if (msgIdx < result.size) {
+                    result[msgIdx].add("psk")
+                }
+            }
+        }
+        return result.map { it.toList() }
     }
 }

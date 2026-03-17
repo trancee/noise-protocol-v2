@@ -13,21 +13,37 @@ class HandshakeState {
     private(set) var isHandshakeComplete = false
     private var cipherStatePair: (CipherState, CipherState)?
     private let fixedEphemeral: KeyPair?
+    private let pskList: [Data]
+    private var pskIndex = 0
+    private let isNoisePSK: Bool
+    private let isPskHandshake: Bool
 
     init(protocolName: String, role: Role, dh: DH, cipher: CipherFunction,
          hash: HashFunction, descriptor: HandshakeDescriptor,
          staticKeyPair: KeyPair? = nil,
          remoteStaticKey: Data? = nil, prologue: Data = Data(),
-         localEphemeral: KeyPair? = nil) throws {
+         localEphemeral: KeyPair? = nil,
+         psks: [Data] = []) throws {
         self.role = role
         self.dhFn = dh
         self.fixedEphemeral = localEphemeral
         self.s = staticKeyPair
         self.rs = remoteStaticKey
+        self.pskList = psks
+        self.isNoisePSK = descriptor.isNoisePSK
+        self.isPskHandshake = descriptor.isNoisePSK || !descriptor.pskPositions.isEmpty
         self.symmetricState = SymmetricState(protocolName: protocolName, cipher: cipher, hash: hash)
         self.messagePatterns = descriptor.messagePatterns
 
         symmetricState.mixHash(prologue)
+
+        // Old NoisePSK_ convention: mix PSK before pre-messages
+        if isNoisePSK {
+            guard !pskList.isEmpty else {
+                throw NoiseError.invalidKey("PSK required for NoisePSK_ protocol")
+            }
+            symmetricState.mixPsk(pskList[0])
+        }
 
         // Process pre-messages: mix known public keys into handshake hash
         for token in descriptor.initiatorPreMessages {
@@ -62,8 +78,15 @@ class HandshakeState {
                 e = fixedEphemeral ?? dhFn.generateKeyPair()
                 buffer.append(e!.publicKey)
                 symmetricState.mixHash(e!.publicKey)
+                if isPskHandshake { symmetricState.mixKey(e!.publicKey) }
             case "s":
                 buffer.append(try symmetricState.encryptAndHash(s!.publicKey))
+            case "psk":
+                guard pskIndex < pskList.count else {
+                    throw NoiseError.invalidKey("Missing PSK at index \(pskIndex)")
+                }
+                symmetricState.mixKeyAndHash(pskList[pskIndex])
+                pskIndex += 1
             default:
                 try processDHToken(token)
             }
@@ -84,11 +107,18 @@ class HandshakeState {
                 re = message.subdata(in: offset..<(offset + dhFn.dhLen))
                 offset += dhFn.dhLen
                 symmetricState.mixHash(re!)
+                if isPskHandshake { symmetricState.mixKey(re!) }
             case "s":
                 let len = symmetricState.hasKey() ? dhFn.dhLen + 16 : dhFn.dhLen
                 let temp = message.subdata(in: offset..<(offset + len))
                 offset += len
                 rs = try symmetricState.decryptAndHash(temp)
+            case "psk":
+                guard pskIndex < pskList.count else {
+                    throw NoiseError.invalidKey("Missing PSK at index \(pskIndex)")
+                }
+                symmetricState.mixKeyAndHash(pskList[pskIndex])
+                pskIndex += 1
             default:
                 try processDHToken(token)
             }

@@ -94,6 +94,18 @@ object Curve25519DH : DH {
         val keySpec = java.security.spec.X509EncodedKeySpec(x509)
         return java.security.KeyFactory.getInstance("X25519").generatePublic(keySpec)
     }
+
+    fun generatePublicKey(privateKey: ByteArray): ByteArray {
+        val privKey = buildX25519PrivateKey(privateKey)
+        val kf = java.security.KeyFactory.getInstance("X25519")
+        // Generate public key from private key using KeyAgreement with basepoint
+        val ka = KeyAgreement.getInstance("X25519")
+        ka.init(privKey)
+        // X25519 basepoint = 9 (little-endian)
+        val basepoint = ByteArray(32).also { it[0] = 9 }
+        ka.doPhase(buildX25519PublicKey(basepoint), true)
+        return ka.generateSecret()
+    }
 }
 
 object X448DH : DH {

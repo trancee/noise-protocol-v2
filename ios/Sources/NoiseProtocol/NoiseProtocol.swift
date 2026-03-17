@@ -11,7 +11,8 @@ public class NoiseSession {
                 staticKeyPair: KeyPair? = nil,
                 remoteStaticKey: Data? = nil,
                 prologue: Data = Data(),
-                localEphemeral: KeyPair? = nil) throws {
+                localEphemeral: KeyPair? = nil,
+                psks: [Data] = []) throws {
         self.role = role
 
         let descriptor = try PatternParser.parse(protocolName)
@@ -27,7 +28,8 @@ public class NoiseSession {
             staticKeyPair: staticKeyPair,
             remoteStaticKey: remoteStaticKey,
             prologue: prologue,
-            localEphemeral: localEphemeral
+            localEphemeral: localEphemeral,
+            psks: psks
         )
     }
 

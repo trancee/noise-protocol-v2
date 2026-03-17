@@ -10,7 +10,8 @@ class HandshakeState(
     staticKeyPair: KeyPair? = null,
     remoteStaticKey: ByteArray? = null,
     prologue: ByteArray = byteArrayOf(),
-    localEphemeral: KeyPair? = null
+    localEphemeral: KeyPair? = null,
+    psks: List<ByteArray> = emptyList()
 ) {
     private val symmetricState = SymmetricState(protocolName, cipher, hash)
     private var s: KeyPair? = staticKeyPair
@@ -23,9 +24,19 @@ class HandshakeState(
         private set
     private var cipherStatePair: Pair<CipherState, CipherState>? = null
     private val fixedEphemeral: KeyPair? = localEphemeral
+    private val pskList = psks.toList()
+    private var pskIndex = 0
+    private val isNoisePSK = descriptor.isNoisePSK
+    private val isPskHandshake = isNoisePSK || descriptor.pskPositions.isNotEmpty()
 
     init {
         symmetricState.mixHash(prologue)
+
+        // Old NoisePSK_ convention: mix PSK before pre-messages
+        if (isNoisePSK) {
+            if (pskList.isEmpty()) throw NoiseException.InvalidKey("PSK required for NoisePSK_ protocol")
+            symmetricState.mixPsk(pskList[0])
+        }
 
         // Process pre-messages: mix known public keys into handshake hash
         for (token in descriptor.initiatorPreMessages) {
@@ -64,9 +75,14 @@ class HandshakeState(
                     e = fixedEphemeral ?: dh.generateKeyPair()
                     buffer += e!!.publicKey
                     symmetricState.mixHash(e!!.publicKey)
+                    if (isPskHandshake) symmetricState.mixKey(e!!.publicKey)
                 }
                 "s" -> {
                     buffer += symmetricState.encryptAndHash(s!!.publicKey)
+                }
+                "psk" -> {
+                    if (pskIndex >= pskList.size) throw NoiseException.InvalidKey("Missing PSK at index $pskIndex")
+                    symmetricState.mixKeyAndHash(pskList[pskIndex++])
                 }
                 else -> processDHToken(token)
             }
@@ -87,12 +103,17 @@ class HandshakeState(
                     re = message.copyOfRange(offset, offset + dh.dhLen)
                     offset += dh.dhLen
                     symmetricState.mixHash(re!!)
+                    if (isPskHandshake) symmetricState.mixKey(re!!)
                 }
                 "s" -> {
                     val len = if (symmetricState.hasKey()) dh.dhLen + 16 else dh.dhLen
                     val temp = message.copyOfRange(offset, offset + len)
                     offset += len
                     rs = symmetricState.decryptAndHash(temp)
+                }
+                "psk" -> {
+                    if (pskIndex >= pskList.size) throw NoiseException.InvalidKey("Missing PSK at index $pskIndex")
+                    symmetricState.mixKeyAndHash(pskList[pskIndex++])
                 }
                 else -> processDHToken(token)
             }

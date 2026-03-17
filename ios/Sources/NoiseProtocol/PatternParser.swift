@@ -8,6 +8,22 @@ public struct HandshakeDescriptor: Sendable {
     public let initiatorPreMessages: [String]
     public let responderPreMessages: [String]
     public let messagePatterns: [[String]]
+    public let isNoisePSK: Bool
+    public let pskPositions: [Int]
+
+    public init(pattern: String, dhFunction: String, cipherFunction: String, hashFunction: String,
+                initiatorPreMessages: [String], responderPreMessages: [String],
+                messagePatterns: [[String]], isNoisePSK: Bool = false, pskPositions: [Int] = []) {
+        self.pattern = pattern
+        self.dhFunction = dhFunction
+        self.cipherFunction = cipherFunction
+        self.hashFunction = hashFunction
+        self.initiatorPreMessages = initiatorPreMessages
+        self.responderPreMessages = responderPreMessages
+        self.messagePatterns = messagePatterns
+        self.isNoisePSK = isNoisePSK
+        self.pskPositions = pskPositions
+    }
 }
 
 public enum PatternParser {
@@ -59,14 +75,28 @@ public enum PatternParser {
 
     public static func parse(_ protocolName: String) throws -> HandshakeDescriptor {
         let parts = protocolName.split(separator: "_").map(String.init)
-        guard parts.count == 5, parts[0] == "Noise" else {
+
+        let isNoisePSKPrefix: Bool
+        let patternField: String
+        let dh: String
+        let cipher: String
+        let hash: String
+
+        if parts.count == 5 && parts[0] == "NoisePSK" {
+            isNoisePSKPrefix = true
+            patternField = parts[1]
+            dh = parts[2]
+            cipher = parts[3]
+            hash = parts[4]
+        } else if parts.count == 5 && parts[0] == "Noise" {
+            isNoisePSKPrefix = false
+            patternField = parts[1]
+            dh = parts[2]
+            cipher = parts[3]
+            hash = parts[4]
+        } else {
             throw NoiseError.invalidPattern(protocolName)
         }
-
-        let patternName = parts[1]
-        let dh = parts[2]
-        let cipher = parts[3]
-        let hash = parts[4]
 
         guard validDH.contains(dh) else {
             throw NoiseError.invalidPattern("Unknown DH: \(dh)")
@@ -78,18 +108,57 @@ public enum PatternParser {
             throw NoiseError.invalidPattern("Unknown hash: \(hash)")
         }
 
-        guard let patternDef = patterns[patternName] else {
-            throw NoiseError.invalidPattern("Unknown pattern: \(patternName)")
+        let (baseName, pskPositions) = extractPskModifiers(patternField)
+
+        guard let patternDef = patterns[baseName] else {
+            throw NoiseError.invalidPattern("Unknown pattern: \(baseName)")
+        }
+
+        let messagePatterns: [[String]]
+        if isNoisePSKPrefix {
+            messagePatterns = patternDef.messagePatterns
+        } else {
+            messagePatterns = insertPskTokens(patternDef.messagePatterns, pskPositions: pskPositions)
         }
 
         return HandshakeDescriptor(
-            pattern: patternName,
+            pattern: baseName,
             dhFunction: dh,
             cipherFunction: cipher,
             hashFunction: hash,
             initiatorPreMessages: patternDef.initiatorPreMessages,
             responderPreMessages: patternDef.responderPreMessages,
-            messagePatterns: patternDef.messagePatterns
+            messagePatterns: messagePatterns,
+            isNoisePSK: isNoisePSKPrefix,
+            pskPositions: pskPositions
         )
+    }
+
+    private static func extractPskModifiers(_ patternField: String) -> (String, [Int]) {
+        let regex = try! NSRegularExpression(pattern: "psk(\\d+)")
+        let range = NSRange(patternField.startIndex..., in: patternField)
+        let matches = regex.matches(in: patternField, range: range)
+        let positions = matches.compactMap { match -> Int? in
+            guard let numRange = Range(match.range(at: 1), in: patternField) else { return nil }
+            return Int(patternField[numRange])
+        }
+        let baseName = patternField.replacingOccurrences(of: "(psk\\d+\\+?)+", with: "", options: .regularExpression)
+        return (baseName, positions)
+    }
+
+    private static func insertPskTokens(_ patterns: [[String]], pskPositions: [Int]) -> [[String]] {
+        if pskPositions.isEmpty { return patterns }
+        var result = patterns.map { Array($0) }
+        for pos in pskPositions {
+            if pos == 0 {
+                result[0].insert("psk", at: 0)
+            } else {
+                let msgIdx = pos - 1
+                if msgIdx < result.count {
+                    result[msgIdx].append("psk")
+                }
+            }
+        }
+        return result
     }
 }

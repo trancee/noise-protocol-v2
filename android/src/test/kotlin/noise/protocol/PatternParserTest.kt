@@ -117,4 +117,46 @@ class PatternParserTest {
         assertEquals(1, desc.messagePatterns.size)
         assertEquals(listOf("e", "es"), desc.messagePatterns[0])
     }
+
+    @Test
+    fun `NoisePSK prefix sets isNoisePSK flag without modifying message patterns`() {
+        val desc = PatternParser.parse("NoisePSK_NN_25519_ChaChaPoly_SHA256")
+
+        assertEquals("NN", desc.pattern)
+        assertEquals(true, desc.isNoisePSK)
+        assertEquals(emptyList<Int>(), desc.pskPositions)
+        // NoisePSK_ convention: no psk tokens in patterns — PSK mixed separately
+        assertEquals(
+            listOf(listOf("e"), listOf("e", "ee")),
+            desc.messagePatterns
+        )
+    }
+
+    @Test
+    fun `Noise_NNpsk0 inserts psk at beginning of first message`() {
+        val desc = PatternParser.parse("Noise_NNpsk0_25519_ChaChaPoly_SHA256")
+
+        assertEquals("NN", desc.pattern)
+        assertEquals(listOf(0), desc.pskPositions)
+        assertEquals(
+            listOf(listOf("psk", "e"), listOf("e", "ee")),
+            desc.messagePatterns
+        )
+    }
+
+    @Test
+    fun `Noise_XXpsk0+psk3 inserts psk at two positions`() {
+        val desc = PatternParser.parse("Noise_XXpsk0+psk3_25519_ChaChaPoly_SHA256")
+
+        assertEquals("XX", desc.pattern)
+        assertEquals(listOf(0, 3), desc.pskPositions)
+        assertEquals(
+            listOf(
+                listOf("psk", "e"),
+                listOf("e", "ee", "s", "es"),
+                listOf("s", "se", "psk")
+            ),
+            desc.messagePatterns
+        )
+    }
 }

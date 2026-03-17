@@ -6,7 +6,8 @@ class NoiseSession(
     staticKeyPair: KeyPair? = null,
     remoteStaticKey: ByteArray? = null,
     prologue: ByteArray = byteArrayOf(),
-    localEphemeral: KeyPair? = null
+    localEphemeral: KeyPair? = null,
+    psks: List<ByteArray> = emptyList()
 ) {
     private val handshakeState: HandshakeState
     private val isOneWay: Boolean
@@ -28,7 +29,8 @@ class NoiseSession(
             staticKeyPair = staticKeyPair,
             remoteStaticKey = remoteStaticKey,
             prologue = prologue,
-            localEphemeral = localEphemeral
+            localEphemeral = localEphemeral,
+            psks = psks
         )
     }
 

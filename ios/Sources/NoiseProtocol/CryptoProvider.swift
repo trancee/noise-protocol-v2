@@ -70,6 +70,11 @@ public struct Curve25519DH: DH {
         )
     }
 
+    public func generatePublicKey(privateKey: Data) -> Data {
+        let signingKey = try! Curve25519.KeyAgreement.PrivateKey(rawRepresentation: privateKey)
+        return Data(signingKey.publicKey.rawRepresentation)
+    }
+
     public func dh(keyPair: KeyPair, publicKey: Data) throws -> Data {
         let privateKey = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: keyPair.privateKey)
         let pubKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: publicKey)

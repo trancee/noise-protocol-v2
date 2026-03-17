@@ -26,6 +26,21 @@ class SymmetricState(
         cipherState.setKey(truncatedK)
     }
 
+    fun mixKeyAndHash(inputKeyMaterial: ByteArray) {
+        val outputs = hash.hkdf(ck, inputKeyMaterial, 3)
+        ck = outputs[0]
+        mixHash(outputs[1])
+        val truncatedK = if (outputs[2].size > 32) outputs[2].copyOf(32) else outputs[2]
+        cipherState.setKey(truncatedK)
+    }
+
+    // Old NoisePSK_ convention: 2-output HKDF, updates ck + MixHash, no cipher key
+    fun mixPsk(psk: ByteArray) {
+        val (newCk, tempH) = hash.hkdf(ck, psk, 2)
+        ck = newCk
+        mixHash(tempH)
+    }
+
     fun mixHash(data: ByteArray) {
         h = hash.hash(h + data)
     }
