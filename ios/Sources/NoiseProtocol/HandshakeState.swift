@@ -23,6 +23,7 @@ class HandshakeState {
          staticKeyPair: KeyPair? = nil,
          remoteStaticKey: Data? = nil, prologue: Data = Data(),
          localEphemeral: KeyPair? = nil,
+         remoteEphemeral: Data? = nil,
          psks: [Data] = []) throws {
         self.role = role
         self.dhFn = dh
@@ -54,6 +55,20 @@ class HandshakeState {
                         : "Remote static key required for \(descriptor.pattern) pattern")
                 }
                 symmetricState.mixHash(key)
+            } else if token == "e" {
+                if role == .initiator {
+                    guard let localEph = localEphemeral else {
+                        throw NoiseError.invalidKey("Initiator ephemeral key required for \(descriptor.pattern) pattern")
+                    }
+                    self.e = localEph
+                    symmetricState.mixHash(localEph.publicKey)
+                } else {
+                    guard let remEph = remoteEphemeral else {
+                        throw NoiseError.invalidKey("Remote ephemeral key required for \(descriptor.pattern) pattern")
+                    }
+                    self.re = remEph
+                    symmetricState.mixHash(remEph)
+                }
             }
         }
         for token in descriptor.responderPreMessages {
@@ -64,8 +79,26 @@ class HandshakeState {
                         : "Remote static key required for \(descriptor.pattern) pattern")
                 }
                 symmetricState.mixHash(key)
+            } else if token == "e" {
+                if role == .responder {
+                    guard let localEph = localEphemeral else {
+                        throw NoiseError.invalidKey("Responder ephemeral key required for \(descriptor.pattern) pattern")
+                    }
+                    self.e = localEph
+                    symmetricState.mixHash(localEph.publicKey)
+                } else {
+                    guard let remEph = remoteEphemeral else {
+                        throw NoiseError.invalidKey("Remote ephemeral key required for \(descriptor.pattern) pattern")
+                    }
+                    self.re = remEph
+                    symmetricState.mixHash(remEph)
+                }
             }
         }
+    }
+
+    func getLocalEphemeralPrivateKey() -> Data? {
+        return e?.privateKey
     }
 
     func writeMessage(payload: Data = Data()) throws -> Data {

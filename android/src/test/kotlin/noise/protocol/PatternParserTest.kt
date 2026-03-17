@@ -145,6 +145,37 @@ class PatternParserTest {
     }
 
     @Test
+    fun `XXfallback converts first message to initiator pre-message`() {
+        val desc = PatternParser.parse("Noise_XXfallback_25519_ChaChaPoly_SHA256")
+
+        assertEquals("XXfallback", desc.pattern)
+        assertEquals(listOf("e"), desc.initiatorPreMessages)
+        assertEquals(emptyList<String>(), desc.responderPreMessages)
+        assertEquals(
+            listOf(
+                listOf("e", "ee", "s", "es"),
+                listOf("s", "se")
+            ),
+            desc.messagePatterns
+        )
+    }
+
+    @Test
+    fun `IKfallback converts first message tokens to initiator pre-messages`() {
+        val desc = PatternParser.parse("Noise_IKfallback_25519_ChaChaPoly_SHA256")
+
+        assertEquals("IKfallback", desc.pattern)
+        // Original IK: initiatorPre=[], responderPre=["s"]
+        // Fallback extracts e,s from first message ["e", "es", "s", "ss"] → initiatorPre gets ["e", "s"]
+        assertEquals(listOf("e", "s"), desc.initiatorPreMessages)
+        assertEquals(listOf("s"), desc.responderPreMessages) // unchanged
+        assertEquals(
+            listOf(listOf("e", "ee", "se")),
+            desc.messagePatterns
+        )
+    }
+
+    @Test
     fun `Noise_XXpsk0+psk3 inserts psk at two positions`() {
         val desc = PatternParser.parse("Noise_XXpsk0+psk3_25519_ChaChaPoly_SHA256")
 

@@ -212,35 +212,65 @@ object PatternParser {
         if (cipher !in VALID_CIPHER) throw NoiseException.InvalidPattern("Unknown cipher: $cipher")
         if (hash !in VALID_HASH) throw NoiseException.InvalidPattern("Unknown hash: $hash")
 
-        // Extract base pattern and psk positions
+        // Extract fallback modifier and psk positions
+        val (afterFallback, isFallback) = extractFallbackModifier(patternField)
+
         val (patternName, pskPositions) = if (isNoisePSK) {
-            patternField to emptyList<Int>()
+            afterFallback to emptyList<Int>()
         } else {
-            extractPskModifiers(patternField)
+            extractPskModifiers(afterFallback)
         }
 
         val patternDef = PATTERNS[patternName]
             ?: throw NoiseException.InvalidPattern("Unknown pattern: $patternName")
 
+        // Apply fallback modifier: convert first message to pre-message, swap roles
+        val effectiveDef = if (isFallback) applyFallback(patternDef) else patternDef
+
         // NoisePSK_ uses a different mechanism: PSK mixed before pre-messages,
         // MixKey(e.pub) after each 'e' token. No psk tokens in message patterns.
         // Modern pskN modifiers insert explicit 'psk' tokens into message patterns.
         val modifiedPatterns = if (isNoisePSK) {
-            patternDef.messagePatterns // unmodified — no psk tokens
+            effectiveDef.messagePatterns
         } else {
-            insertPskTokens(patternDef.messagePatterns, pskPositions)
+            insertPskTokens(effectiveDef.messagePatterns, pskPositions)
         }
 
+        val displayPattern = if (isFallback) "${patternName}fallback" else patternName
+
         return HandshakeDescriptor(
-            pattern = patternName,
+            pattern = displayPattern,
             dhFunction = dh,
             cipherFunction = cipher,
             hashFunction = hash,
-            initiatorPreMessages = patternDef.initiatorPreMessages,
-            responderPreMessages = patternDef.responderPreMessages,
+            initiatorPreMessages = effectiveDef.initiatorPreMessages,
+            responderPreMessages = effectiveDef.responderPreMessages,
             messagePatterns = modifiedPatterns,
             pskPositions = pskPositions,
             isNoisePSK = isNoisePSK
+        )
+    }
+
+    private fun extractFallbackModifier(patternField: String): Pair<String, Boolean> {
+        val fallbackSuffix = "fallback"
+        if (patternField.contains(fallbackSuffix)) {
+            val idx = patternField.indexOf(fallbackSuffix)
+            val remaining = patternField.removeRange(idx, idx + fallbackSuffix.length)
+            return remaining to true
+        }
+        return patternField to false
+    }
+
+    private fun applyFallback(baseDef: PatternDef): PatternDef {
+        // The fallback modifier converts the initiator's first message into a pre-message.
+        // Only public key tokens (e, s) become pre-messages; DH tokens are dropped.
+        // Roles are NOT swapped — the responder simply writes first after the fallback.
+        val firstMessage = baseDef.messagePatterns[0]
+        val preMessageTokens = firstMessage.filter { it == "e" || it == "s" }
+        return PatternDef(
+            initiatorPreMessages = baseDef.initiatorPreMessages + preMessageTokens,
+            responderPreMessages = baseDef.responderPreMessages,
+            messagePatterns = baseDef.messagePatterns.drop(1)
         )
     }
 

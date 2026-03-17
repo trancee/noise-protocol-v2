@@ -20,8 +20,12 @@ open class CipherState(private val cipher: CipherFunction, key: ByteArray? = nul
 
     open fun decryptWithAd(ad: ByteArray, ciphertext: ByteArray): ByteArray {
         val key = k ?: return ciphertext
-        val plaintext = cipher.decrypt(key, n, ad, ciphertext)
-        n++
-        return plaintext
+        try {
+            val plaintext = cipher.decrypt(key, n, ad, ciphertext)
+            n++
+            return plaintext
+        } catch (_: Exception) {
+            throw NoiseException.DecryptionFailed()
+        }
     }
 }

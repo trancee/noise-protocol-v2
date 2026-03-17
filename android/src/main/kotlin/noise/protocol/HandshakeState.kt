@@ -11,6 +11,7 @@ class HandshakeState(
     remoteStaticKey: ByteArray? = null,
     prologue: ByteArray = byteArrayOf(),
     localEphemeral: KeyPair? = null,
+    remoteEphemeral: ByteArray? = null,
     psks: List<ByteArray> = emptyList()
 ) {
     private val symmetricState = SymmetricState(protocolName, cipher, hash)
@@ -41,6 +42,16 @@ class HandshakeState(
         // Process pre-messages: mix known public keys into handshake hash
         for (token in descriptor.initiatorPreMessages) {
             when (token) {
+                "e" -> {
+                    val key = if (role == Role.INITIATOR) {
+                        e = localEphemeral
+                        localEphemeral?.publicKey ?: throw NoiseException.InvalidKey("Initiator ephemeral key required for ${descriptor.pattern} pattern")
+                    } else {
+                        re = remoteEphemeral
+                        remoteEphemeral ?: throw NoiseException.InvalidKey("Remote ephemeral key required for ${descriptor.pattern} pattern")
+                    }
+                    symmetricState.mixHash(key)
+                }
                 "s" -> {
                     val key = if (role == Role.INITIATOR) {
                         s?.publicKey ?: throw NoiseException.InvalidKey("Initiator static key required for ${descriptor.pattern} pattern")
@@ -53,6 +64,16 @@ class HandshakeState(
         }
         for (token in descriptor.responderPreMessages) {
             when (token) {
+                "e" -> {
+                    val key = if (role == Role.RESPONDER) {
+                        e = localEphemeral
+                        localEphemeral?.publicKey ?: throw NoiseException.InvalidKey("Responder ephemeral key required for ${descriptor.pattern} pattern")
+                    } else {
+                        re = remoteEphemeral
+                        remoteEphemeral ?: throw NoiseException.InvalidKey("Remote ephemeral key required for ${descriptor.pattern} pattern")
+                    }
+                    symmetricState.mixHash(key)
+                }
                 "s" -> {
                     val key = if (role == Role.RESPONDER) {
                         s?.publicKey ?: throw NoiseException.InvalidKey("Responder static key required for ${descriptor.pattern} pattern")
@@ -123,6 +144,8 @@ class HandshakeState(
         advanceHandshake()
         return payload
     }
+
+    fun getLocalEphemeralPrivateKey(): ByteArray? = e?.privateKey
 
     fun split(): Pair<CipherState, CipherState> {
         if (!isHandshakeComplete) throw NoiseException.HandshakeIncomplete()

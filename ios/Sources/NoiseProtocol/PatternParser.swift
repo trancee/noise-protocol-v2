@@ -155,11 +155,14 @@ public enum PatternParser {
             throw NoiseError.invalidPattern("Unknown hash: \(hash)")
         }
 
-        let (baseName, pskPositions) = extractPskModifiers(patternField)
+        let (remainingPattern, isFallback) = extractFallbackModifier(patternField)
+        let (baseName, pskPositions) = extractPskModifiers(remainingPattern)
 
-        guard let patternDef = patterns[baseName] else {
+        guard let basePatternDef = patterns[baseName] else {
             throw NoiseError.invalidPattern("Unknown pattern: \(baseName)")
         }
+
+        let patternDef = isFallback ? applyFallback(basePatternDef) : basePatternDef
 
         let messagePatterns: [[String]]
         if isNoisePSKPrefix {
@@ -168,8 +171,10 @@ public enum PatternParser {
             messagePatterns = insertPskTokens(patternDef.messagePatterns, pskPositions: pskPositions)
         }
 
+        let displayName = baseName + (isFallback ? "fallback" : "")
+
         return HandshakeDescriptor(
-            pattern: baseName,
+            pattern: displayName,
             dhFunction: dh,
             cipherFunction: cipher,
             hashFunction: hash,
@@ -178,6 +183,26 @@ public enum PatternParser {
             messagePatterns: messagePatterns,
             isNoisePSK: isNoisePSKPrefix,
             pskPositions: pskPositions
+        )
+    }
+
+    private static func extractFallbackModifier(_ patternField: String) -> (String, Bool) {
+        let fallbackSuffix = "fallback"
+        if let range = patternField.range(of: fallbackSuffix) {
+            var remaining = patternField
+            remaining.removeSubrange(range)
+            return (remaining, true)
+        }
+        return (patternField, false)
+    }
+
+    private static func applyFallback(_ baseDef: PatternDef) -> PatternDef {
+        let firstMessage = baseDef.messagePatterns[0]
+        let preMessageTokens = firstMessage.filter { $0 == "e" || $0 == "s" }
+        return PatternDef(
+            initiatorPreMessages: baseDef.initiatorPreMessages + preMessageTokens,
+            responderPreMessages: baseDef.responderPreMessages,
+            messagePatterns: Array(baseDef.messagePatterns.dropFirst())
         )
     }
 

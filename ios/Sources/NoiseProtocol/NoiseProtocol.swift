@@ -12,6 +12,7 @@ public class NoiseSession {
                 remoteStaticKey: Data? = nil,
                 prologue: Data = Data(),
                 localEphemeral: KeyPair? = nil,
+                remoteEphemeral: Data? = nil,
                 psks: [Data] = []) throws {
         self.role = role
 
@@ -29,8 +30,13 @@ public class NoiseSession {
             remoteStaticKey: remoteStaticKey,
             prologue: prologue,
             localEphemeral: localEphemeral,
+            remoteEphemeral: remoteEphemeral,
             psks: psks
         )
+    }
+
+    public func getLocalEphemeralPrivateKey() -> Data? {
+        return handshakeState.getLocalEphemeralPrivateKey()
     }
 
     @discardableResult

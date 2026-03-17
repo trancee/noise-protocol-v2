@@ -7,6 +7,7 @@ class NoiseSession(
     remoteStaticKey: ByteArray? = null,
     prologue: ByteArray = byteArrayOf(),
     localEphemeral: KeyPair? = null,
+    remoteEphemeral: ByteArray? = null,
     psks: List<ByteArray> = emptyList()
 ) {
     private val handshakeState: HandshakeState
@@ -30,6 +31,7 @@ class NoiseSession(
             remoteStaticKey = remoteStaticKey,
             prologue = prologue,
             localEphemeral = localEphemeral,
+            remoteEphemeral = remoteEphemeral,
             psks = psks
         )
     }
@@ -65,6 +67,8 @@ class NoiseSession(
         if (isHandshakeComplete) throw NoiseException.InvalidState("Handshake already complete, use split() for transport")
         return handshakeState.readMessage(message)
     }
+
+    fun getLocalEphemeralPrivateKey(): ByteArray? = handshakeState.getLocalEphemeralPrivateKey()
 
     fun split(): TransportSession {
         val (c1, c2) = handshakeState.split()

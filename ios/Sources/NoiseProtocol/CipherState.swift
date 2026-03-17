@@ -26,7 +26,12 @@ public class CipherState {
 
     public func decryptWithAd(_ ad: Data, ciphertext: Data) throws -> Data {
         guard let key = k else { return ciphertext }
-        let plaintext = try cipher.decrypt(key: key, nonce: n, ad: ad, ciphertext: ciphertext)
+        let plaintext: Data
+        do {
+            plaintext = try cipher.decrypt(key: key, nonce: n, ad: ad, ciphertext: ciphertext)
+        } catch {
+            throw NoiseError.decryptionFailed
+        }
         n += 1
         return plaintext
     }
