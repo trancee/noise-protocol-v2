@@ -105,9 +105,9 @@ final class CipherStateHardeningTests: XCTestCase {
 
         let threads = 100
         let messagesPerThread = 10
-        let ciphertexts = NSMutableArray()
+        nonisolated(unsafe) var ciphertexts: [Data] = []
         let resultsLock = NSLock()
-        let errors = NSMutableArray()
+        nonisolated(unsafe) var errors: [any Error] = []
         let errorLock = NSLock()
 
         DispatchQueue.concurrentPerform(iterations: threads) { t in
@@ -115,11 +115,11 @@ final class CipherStateHardeningTests: XCTestCase {
                 do {
                     let ct = try sender.encryptWithAd(Data(), plaintext: Data("msg-\(t)-\(i)".utf8))
                     resultsLock.lock()
-                    ciphertexts.add(ct)
+                    ciphertexts.append(ct)
                     resultsLock.unlock()
                 } catch {
                     errorLock.lock()
-                    errors.add(error)
+                    errors.append(error)
                     errorLock.unlock()
                 }
             }

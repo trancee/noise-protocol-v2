@@ -1,5 +1,5 @@
 plugins {
-    kotlin("jvm") version "2.1.10"
+    kotlin("jvm") version "2.2.0"
     `maven-publish`
     signing
     id("org.jetbrains.dokka") version "2.0.0"
@@ -19,6 +19,37 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+
+    val benchmarkPath = layout.buildDirectory.file("benchmarks/baseline-kotlin.json").get().asFile.absolutePath
+
+    doLast {
+        val file = File(benchmarkPath)
+        if (!file.exists()) return@doLast
+
+        val json = file.readText()
+        val regex = Regex(""""name"\s*:\s*"([^"]+)"[^}]*"opsPerSec"\s*:\s*([\d.E+-]+)[^}]*"avgNs"\s*:\s*([\d.E+-]+)""")
+        val matches = regex.findAll(json).toList()
+        if (matches.isEmpty()) return@doLast
+
+        val names = matches.map { it.groupValues[1] }
+        val ops = matches.map { it.groupValues[2].toDouble() }
+        val avgs = matches.map { it.groupValues[3].toDouble() }
+
+        fun fmtLatency(ns: Double): String = when {
+            ns < 1_000 -> "${ns.toLong()} ns"
+            ns < 1_000_000 -> "${"%.1f".format(ns / 1_000)} µs"
+            else -> "${"%.1f".format(ns / 1_000_000)} ms"
+        }
+
+        val nameW = maxOf(names.maxOf { it.length }, 9)
+        println("\n⚡ Kotlin Benchmark Results\n")
+        println("| ${"Benchmark".padEnd(nameW)} |    ops/sec |  avg latency |")
+        println("|${"".padEnd(nameW + 2, '-')}|-----------:|-------------:|")
+        for (i in names.indices) {
+            println("| ${names[i].padEnd(nameW)} | %10d | %12s |".format(ops[i].toLong(), fmtLatency(avgs[i])))
+        }
+        println()
+    }
 }
 
 kotlin {
@@ -34,7 +65,7 @@ val sourcesJar by tasks.registering(Jar::class) {
 // Generate Javadoc JAR from Dokka
 val javadocJar by tasks.registering(Jar::class) {
     archiveClassifier.set("javadoc")
-    dependsOn(tasks.named("dokkaHtml"))
+    dependsOn(tasks.named("dokkaGeneratePublicationHtml"))
     from(layout.buildDirectory.dir("dokka/html"))
 }
 

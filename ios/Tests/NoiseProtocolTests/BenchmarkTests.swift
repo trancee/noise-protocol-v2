@@ -296,3 +296,89 @@ final class TransportBenchmarkTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Full Benchmark Suite
+
+final class FullBenchmarkSuiteTests: XCTestCase {
+
+    func testRunFullBenchmarkSuiteAndSaveResults() throws {
+        let runner = BenchmarkRunner(warmupIterations: 20, measureIterations: 100)
+        let slowRunner = BenchmarkRunner(warmupIterations: 2, measureIterations: 10)
+        var results = [BenchmarkResult]()
+
+        // DH primitives
+        let dh25519 = Curve25519DH()
+        results.append(runner.run("dh-x25519-keygen") { _ = dh25519.generateKeyPair() })
+        let kp25519A = dh25519.generateKeyPair()
+        let kp25519B = dh25519.generateKeyPair()
+        results.append(try runner.run("dh-x25519") { _ = try dh25519.dh(keyPair: kp25519A, publicKey: kp25519B.publicKey) })
+
+        let dh448 = X448DH_()
+        results.append(slowRunner.run("dh-x448-keygen") { _ = dh448.generateKeyPair() })
+        let kp448A = dh448.generateKeyPair()
+        let kp448B = dh448.generateKeyPair()
+        results.append(try slowRunner.run("dh-x448") { _ = try dh448.dh(keyPair: kp448A, publicKey: kp448B.publicKey) })
+
+        // Ciphers
+        let chacha = ChaChaPoly_()
+        let aesgcm = AESGCM_()
+        let key = Data(repeating: 0x42, count: 32)
+        let plaintext = Data(repeating: 0, count: 64)
+        let ad = Data()
+        var n1: UInt64 = 0; var n2: UInt64 = 0
+        results.append(try runner.run("cipher-chacha") { _ = try chacha.encrypt(key: key, nonce: n1, ad: ad, plaintext: plaintext); n1 += 1 })
+        results.append(try runner.run("cipher-aesgcm") { _ = try aesgcm.encrypt(key: key, nonce: n2, ad: ad, plaintext: plaintext); n2 += 1 })
+
+        // Hashes
+        let sha256 = SHA256Hash_(); let sha512 = SHA512Hash_()
+        let blake2b = Blake2bHash_(); let blake2s = Blake2sHash_()
+        let data = Data(repeating: 0, count: 64)
+        results.append(runner.run("hash-sha256") { _ = sha256.hash(data) })
+        results.append(runner.run("hash-sha512") { _ = sha512.hash(data) })
+        results.append(runner.run("hash-blake2b") { _ = blake2b.hash(data) })
+        results.append(runner.run("hash-blake2s") { _ = blake2s.hash(data) })
+
+        // Handshakes
+        results.append(try runner.run("handshake-NN") {
+            let i = try NoiseSession(protocolName: "Noise_NN_25519_ChaChaPoly_SHA256", role: .initiator)
+            let r = try NoiseSession(protocolName: "Noise_NN_25519_ChaChaPoly_SHA256", role: .responder)
+            _ = try r.readMessage(i.writeMessage())
+            _ = try i.readMessage(r.writeMessage())
+        })
+
+        let suite = BenchmarkSuite(
+            platform: "swift",
+            timestamp: ISO8601DateFormatter().string(from: Date()),
+            results: results
+        )
+
+        // Save baseline
+        let baselineDir = URL(fileURLWithPath: ".build/benchmarks", isDirectory: true)
+        try FileManager.default.createDirectory(at: baselineDir, withIntermediateDirectories: true)
+        let baselineFile = baselineDir.appendingPathComponent("baseline-swift.json")
+        try suite.saveToFile(baselineFile)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: baselineFile.path))
+
+        // Print results table
+        let nameW = max(results.map(\.name.count).max() ?? 9, 9)
+        print("\n⚡ Swift Benchmark Results\n")
+        print("| \("Benchmark".padding(toLength: nameW, withPad: " ", startingAt: 0)) |    ops/sec |  avg latency |")
+        print("|\(String(repeating: "-", count: nameW + 2))|-----------:|-------------:|")
+        for r in results {
+            let latency: String
+            if r.avgNs < 1_000 {
+                latency = "\(Int(r.avgNs)) ns"
+            } else if r.avgNs < 1_000_000 {
+                latency = String(format: "%.1f µs", r.avgNs / 1_000)
+            } else {
+                latency = String(format: "%.1f ms", r.avgNs / 1_000_000)
+            }
+            let opsCol = String(format: "%9d", Int(r.opsPerSec))
+            let latCol = String(repeating: " ", count: max(0, 12 - latency.count)) + latency
+            print("| \(r.name.padding(toLength: nameW, withPad: " ", startingAt: 0)) | \(opsCol) | \(latCol) |")
+        }
+        print()
+
+        XCTAssertTrue(results.allSatisfy { $0.opsPerSec > 0 }, "All benchmarks should produce positive ops/sec")
+    }
+}

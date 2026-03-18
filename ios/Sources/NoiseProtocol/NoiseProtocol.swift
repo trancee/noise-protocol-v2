@@ -184,7 +184,7 @@ public struct TransportSession {
 /// In one-way Noise patterns (N, K, X), only the initiator sends encrypted data.
 /// The responder's send channel and the initiator's receive channel are disabled
 /// using this subclass, which throws ``NoiseError/invalidState(_:)`` on any operation.
-public class DisabledCipherState: CipherState {
+public class DisabledCipherState: CipherState, @unchecked Sendable {
     /// Creates a disabled cipher state. No key is set; all operations will throw.
     init() {
         super.init(cipher: ChaChaPoly_())

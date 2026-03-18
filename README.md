@@ -352,7 +352,7 @@ cd ios && swift test
 
 ```bash
 # Kotlin (Dokka)
-cd android && gradle dokkaHtml
+cd android && gradle dokkaGenerate
 # Output: build/dokka/html/
 
 # Swift (DocC)
@@ -365,15 +365,16 @@ Both platforms include a benchmark harness. Run benchmarks as part of the test s
 
 ```bash
 # Kotlin
-cd android && gradle test --tests "noise.protocol.BenchmarkTest"
+cd android && gradle test --tests "noise.protocol.*Benchmark*"
 
 # Swift (use release mode for meaningful numbers)
-cd ios && swift test -c release --filter BenchmarkTests
+cd ios && swift test -c release --filter Benchmark
 ```
 
 ## Project Structure
 
 ```
+├── .github/workflows/ci.yml  # CI: runs tests + benchmarks on every PR
 ├── android/                  # Kotlin implementation
 │   ├── build.gradle.kts      # Gradle build + Maven publishing
 │   └── src/

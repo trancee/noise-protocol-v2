@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kotlin-tests:
+    name: Kotlin Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - run: gradle test
+
+      - name: Benchmark results
+        if: always()
+        run: |
+          FILE=build/benchmarks/baseline-kotlin.json
+          if [ ! -f "$FILE" ]; then echo "No benchmark results found"; exit 0; fi
+          echo "### ⚡ Kotlin Benchmark Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Benchmark | ops/sec | avg latency |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-----------|--------:|------------:|" >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.results[] | "| \(.name) | \(.opsPerSec | round) | \(if .avgNs < 1000 then "\(.avgNs | round) ns" elif .avgNs < 1000000 then "\(.avgNs / 1000 | . * 10 | round / 10) µs" else "\(.avgNs / 1000000 | . * 10 | round / 10) ms" end) |"' "$FILE" >> "$GITHUB_STEP_SUMMARY"
+
+  swift-tests:
+    name: Swift Tests
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: swift test
+
+      - name: Benchmark results
+        if: always()
+        run: |
+          FILE=.build/benchmarks/baseline-swift.json
+          if [ ! -f "$FILE" ]; then echo "No benchmark results found"; exit 0; fi
+          echo "### ⚡ Swift Benchmark Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Benchmark | ops/sec | avg latency |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-----------|--------:|------------:|" >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.results[] | "| \(.name) | \(.opsPerSec | round) | \(if .avgNs < 1000 then "\(.avgNs | round) ns" elif .avgNs < 1000000 then "\(.avgNs / 1000 | . * 10 | round / 10) µs" else "\(.avgNs / 1000000 | . * 10 | round / 10) ms" end) |"' "$FILE" >> "$GITHUB_STEP_SUMMARY"
