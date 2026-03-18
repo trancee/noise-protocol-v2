@@ -371,10 +371,67 @@ cd android && gradle test --tests "noise.protocol.*Benchmark*"
 cd ios && swift test -c release --filter Benchmark
 ```
 
+### Releasing
+
+Releases are triggered by creating a GitHub Release with a tag matching `vX.Y.Z`. The release workflow automatically:
+
+1. Validates the tag format
+2. Runs the full test suite
+3. Signs artifacts with GPG
+4. Publishes to Maven Central via the Central Portal API
+5. Publishes to GitHub Packages
+
+**Creating a release:**
+
+```bash
+# Tag and push
+git tag v1.0.0
+git push origin v1.0.0
+
+# Then create a GitHub Release from the tag (via UI or CLI)
+gh release create v1.0.0 --title "v1.0.0" --generate-notes
+```
+
+**Required repository secrets** (Settings → Secrets → Actions):
+
+| Secret | Description |
+|--------|-------------|
+| `MAVEN_CENTRAL_USERNAME` | Central Portal token username |
+| `MAVEN_CENTRAL_PASSWORD` | Central Portal token password |
+| `GPG_PRIVATE_KEY` | ASCII-armored GPG private key |
+| `GPG_PASSPHRASE` | GPG key passphrase |
+
+Generate a Portal token at [central.sonatype.com/usertoken](https://central.sonatype.com/usertoken).
+
+### Maven Central API
+
+A standalone script for querying Maven Central:
+
+```bash
+# Search for artifacts
+./scripts/maven.sh search "noise protocol"
+
+# List published versions
+./scripts/maven.sh versions noise.protocol noise-protocol
+
+# Show artifact details with dependency snippets
+./scripts/maven.sh info org.jetbrains.kotlin kotlin-stdlib
+
+# Get latest version
+./scripts/maven.sh latest noise.protocol noise-protocol
+
+# Fetch a POM file
+./scripts/maven.sh pom org.jetbrains.kotlin kotlin-stdlib 2.2.0
+
+# Check deployment status (requires MAVEN_CENTRAL_USERNAME/PASSWORD)
+./scripts/maven.sh status
+```
+
 ## Project Structure
 
 ```
 ├── .github/workflows/ci.yml  # CI: runs tests + benchmarks on every PR
+├── .github/workflows/release.yml # Release: publish to Maven Central on tag
 ├── android/                  # Kotlin implementation
 │   ├── build.gradle.kts      # Gradle build + Maven publishing
 │   └── src/
@@ -427,6 +484,7 @@ cd ios && swift test -c release --filter Benchmark
 │       └── Tests/NoiseProtocolTests/
 │           └── *.swift               # 69 tests
 ├── test-vectors/             # Shared JSON test vectors (cacophony format)
+├── scripts/maven.sh          # Maven Central query tool
 └── LICENSE                   # Unlicense (public domain)
 ```
 
