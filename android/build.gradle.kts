@@ -18,7 +18,7 @@ plugins {
     id("org.jetbrains.dokka") version "2.0.0"
 }
 
-group = "noise.protocol"
+group = "ch.trancee"
 version = providers.environmentVariable("RELEASE_VERSION")
     .orElse(providers.gradleProperty("releaseVersion"))
     .getOrElse("0.1.0-SNAPSHOT")
@@ -159,7 +159,7 @@ tasks.register("publishToMavenCentral") {
     dependsOn("publishMavenJavaPublicationToStagingRepository")
 
     val stagingPath = layout.buildDirectory.dir("staging-deploy").get().asFile.absolutePath
-    val bundlePath = layout.buildDirectory.file("central-bundle.zip").get().asFile.absolutePath
+    val bundlePath = layout.buildDirectory.file("${projectGroup}-${projectName}-${projectVersion}.zip").get().asFile.absolutePath
     val projectGroup = project.group.toString()
     val projectName = project.name
     val projectVersion = project.version.toString()

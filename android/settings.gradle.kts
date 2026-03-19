@@ -1,1 +1,1 @@
-rootProject.name = "noise-protocol"
+rootProject.name = "noise-protocol-v2"
