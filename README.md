@@ -21,7 +21,7 @@ Both platforms share test vectors but are otherwise fully independent codebases 
 - **Ciphers**: ChaChaPoly, AESGCM
 - **Hash functions**: SHA256, SHA512, BLAKE2b, BLAKE2s
 - **Security hardening**: MAC-failure invalidation, nonce exhaustion protection, auto-rekey, thread-safe `CipherState`
-- **Secure memory**: Automatic secret zeroing with `SecureMemory` (Kotlin) / `SecureBuffer` (Swift)
+- **Secure memory**: Automatic secret zeroing with `SecureBuffer` (Kotlin) / `SecureBuffer` (Swift)
 - **Benchmarking**: Built-in benchmark harness for all primitives, handshakes, and transport throughput
 
 ## Installation
@@ -32,7 +32,7 @@ Add the dependency to your `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("noise.protocol:noise-protocol:0.1.0")
+    implementation("ch.trancee:noise-protocol-v2:0.1.0")
 }
 ```
 
@@ -312,7 +312,7 @@ flowchart LR
 - **Nonce exhaustion**: Hard error when the nonce counter reaches its maximum value.
 - **Auto-rekey**: `Rekey()` follows the Noise spec: `ENCRYPT(k, maxnonce, zerolen, zeros)`, truncated to 32 bytes.
 - **Thread safety**: `CipherState` is thread-safe on both platforms (Kotlin `@Synchronized`, Swift `NSLock`).
-- **Secret zeroing**: `SecureMemory` (Kotlin) and `SecureBuffer` (Swift) zero sensitive key material when no longer needed.
+- **Secret zeroing**: `SecureBuffer` (Kotlin) and `SecureBuffer` (Swift) zero sensitive key material when no longer needed.
 
 ### What this library does NOT guarantee
 
@@ -344,7 +344,7 @@ cd ios && swift build
 # Kotlin (127 tests)
 cd android && gradle test
 
-# Swift (69 tests)
+# Swift (45 tests)
 cd ios && swift test
 ```
 
@@ -412,13 +412,13 @@ A standalone script for querying Maven Central:
 ./scripts/maven.sh search "noise protocol"
 
 # List published versions
-./scripts/maven.sh versions noise.protocol noise-protocol
+./scripts/maven.sh versions ch.trancee noise-protocol-v2
 
 # Show artifact details with dependency snippets
 ./scripts/maven.sh info org.jetbrains.kotlin kotlin-stdlib
 
 # Get latest version
-./scripts/maven.sh latest noise.protocol noise-protocol
+./scripts/maven.sh latest ch.trancee noise-protocol-v2
 
 # Fetch a POM file
 ./scripts/maven.sh pom org.jetbrains.kotlin kotlin-stdlib 2.2.0
@@ -453,7 +453,7 @@ A standalone script for querying Maven Central:
 │       │   ├── DhDispatch.kt         # Role-conditional DH routing
 │       │   ├── KeyPair.kt            # DH key pair
 │       │   ├── Role.kt               # INITIATOR / RESPONDER
-│       │   ├── SecureMemory.kt       # Secret zeroing
+│       │   ├── SecureBuffer.kt       # Secret zeroing
 │       │   ├── X448.kt               # Pure X448 DH
 │       │   └── Benchmark.kt          # Benchmark harness
 │       └── test/kotlin/noise/protocol/
@@ -482,7 +482,7 @@ A standalone script for querying Maven Central:
 │       │   ├── X448.swift                # Pure X448 DH
 │       │   └── Benchmark.swift           # Benchmark harness
 │       └── Tests/NoiseProtocolTests/
-│           └── *.swift               # 69 tests
+│           └── *.swift               # 45 tests
 ├── test-vectors/             # Shared JSON test vectors (cacophony format)
 ├── scripts/maven.sh          # Maven Central query tool
 └── LICENSE                   # Unlicense (public domain)
