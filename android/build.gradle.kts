@@ -159,10 +159,10 @@ tasks.register("publishToMavenCentral") {
     dependsOn("publishMavenJavaPublicationToStagingRepository")
 
     val stagingPath = layout.buildDirectory.dir("staging-deploy").get().asFile.absolutePath
-    val bundlePath = layout.buildDirectory.file("${projectGroup}-${projectName}-${projectVersion}.zip").get().asFile.absolutePath
     val projectGroup = project.group.toString()
     val projectName = project.name
     val projectVersion = project.version.toString()
+    val bundlePath = layout.buildDirectory.file("${projectGroup}-${projectName}-${projectVersion}.zip").get().asFile.absolutePath
 
     doLast {
         val stagingDir = File(stagingPath)
